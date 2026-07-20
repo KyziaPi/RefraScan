@@ -36,12 +36,46 @@ def preprocess_metadata(df, numerical_cols, categorical_cols):
         
     return df, scaler, encoders
 
-def load_and_preprocess_image(img_path, target_size=(300, 300)):
-    """Standardized image reader for custom generator pipelines."""
-    try:
+def resize_with_padding(img, target_size=(300, 300)):
+    """Resizes an image maintaining aspect ratio and pads remaining areas with black."""
+    h, w = img.shape[:2]
+    target_h, target_w = target_size
+    
+    # Calculate scaling factor
+    scale = min(target_w / w, target_h / h)
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+    
+    # Resize keeping aspect ratio
+    resized = cv2.resize(img, (new_w, new_h))
+    
+    # Calculate padding amounts
+    pad_w = target_w - new_w
+    pad_h = target_h - new_h
+    
+    top = pad_h // 2
+    bottom = pad_h - top
+    left = pad_w // 2
+    right = pad_w - left
+    
+    # Add black border padding
+    padded_img = cv2.copyMakeBorder(resized, top, bottom, left, right, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+    return padded_img
+
+def load_and_preprocess_image(img_path, data_origin, target_size=(300, 300)):
+    """Loads image and applies specific resizing logic based on the data origin."""    try:
         img = cv2.imread(img_path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = cv2.resize(img, target_size)
+        
+        # Conditional preprocessing strategy based on origin
+        if data_origin == 'PAPILA':
+            img = resize_with_padding(img, target_size)
+        elif data_origin == 'AUFMC - Lasik':
+            img = cv2.resize(img, target_size) # Normal resize without padding
+        else:
+            # Fallback default if an unexpected origin string occurs
+            img = cv2.resize(img, target_size)
+        
         return img
     except Exception as e:
         # Fallback to zeros if image fails to load during training
@@ -60,12 +94,17 @@ def create_multimodal_generator(df, numerical_cols, batch_size=16, target_size=(
             labels = []
             
             for _, row in batch_df.iterrows():
-                img = load_and_preprocess_image(row['full_path'], target_size)
+                # Extract the data_origin variable from the current row
+                origin = row['data_origin']
+                
+                # Pass data_origin into the updated loader
+                img = load_and_preprocess_image(row['full_path'], data_origin=origin, target_size=target_size)
+                
                 if preprocess_fn:
                     img = preprocess_fn(img)
                     
                 images.append(img)
                 metadata.append(row[numerical_cols].values.astype(np.float32))
-                labels.append(row['Diagnosis_encoded']) # Adjust based on your target col name
+                labels.append(row['classification'])
                 
             yield [np.array(images), np.array(metadata)], np.array(labels)
