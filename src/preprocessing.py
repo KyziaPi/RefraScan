@@ -63,7 +63,8 @@ def resize_with_padding(img, target_size=(300, 300)):
     return padded_img
 
 def load_and_preprocess_image(img_path, data_origin, target_size=(300, 300)):
-    """Loads image and applies specific resizing logic based on the data origin."""    try:
+    """Loads image and applies specific resizing logic based on the data origin."""    
+    try:
         img = cv2.imread(img_path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
