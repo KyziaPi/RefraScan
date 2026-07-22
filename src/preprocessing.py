@@ -77,6 +77,9 @@ def augment_image(img_tensor, label_code):
     Label codes: 0 = Emmetropia, 1 = Myopia, 2 = Hyperopia.
     Emmetropia (0) and Hyperopia (2) get extra heavy augmentations.
     """
+    # Ensure tensor is float32 for smooth augmentation math
+    img_tensor = tf.cast(img_tensor, tf.float32)
+    
     # Standard Augmentations (All Classes)
     img_tensor = tf.image.random_flip_left_right(img_tensor)
     img_tensor = tf.image.random_flip_up_down(img_tensor)
