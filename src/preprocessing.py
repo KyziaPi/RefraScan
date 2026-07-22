@@ -37,35 +37,47 @@ def preprocess_metadata(df, numerical_cols, categorical_cols):
     return df, scaler, encoders
 
 def resize_with_padding(img, target_size=(300, 300)):
-    """Resizes an image maintaining aspect ratio and pads remaining areas with black."""
-    h, w = img.shape[:2]
+    """
+    Resizes an image maintaining aspect ratio strictly without stretching,
+    padding the remaining canvas with black borders (e.g., top/bottom).
+    """
     target_h, target_w = target_size
+    h, w = img.shape[:2]
     
-    # Calculate scaling factor
-    scale = min(target_w / w, target_h / h)
-    new_w = int(w * scale)
-    new_h = int(h * scale)
+    # Calculate scale factor to fit within target bounds without stretching
+    scale = min(target_w / float(w), target_h / float(h))
+    new_w = max(1, int(round(w * scale)))
+    new_h = max(1, int(round(h * scale)))
     
-    # Resize keeping aspect ratio
-    resized = cv2.resize(img, (new_w, new_h))
+    # Resize with aspect ratio preserved
+    resized_img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR)
     
-    # Calculate padding amounts
-    pad_w = target_w - new_w
+    # Calculate required padding
     pad_h = target_h - new_h
+    pad_w = target_w - new_w
     
     top = pad_h // 2
     bottom = pad_h - top
     left = pad_w // 2
     right = pad_w - left
     
-    # Add black border padding
-    padded_img = cv2.copyMakeBorder(resized, top, bottom, left, right, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+    # Apply black padding (0,0,0) around the resized image
+    padded_img = cv2.copyMakeBorder(
+        resized_img, 
+        top, bottom, left, right, 
+        borderType=cv2.BORDER_CONSTANT, 
+        value=[0, 0, 0]
+    )
+    
     return padded_img
 
 def load_and_preprocess_image(img_path, data_origin, target_size=(300, 300)):
     """Loads image and applies specific resizing logic based on the data origin."""    
     try:
         img = cv2.imread(img_path)
+        if img is None:
+            raise FileNotFoundError(f"Image not found at path: {img_path}")
+        
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
         # Conditional preprocessing strategy based on origin
