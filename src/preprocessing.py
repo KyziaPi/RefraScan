@@ -142,7 +142,7 @@ def create_multimodal_generator(df, metadata_cols, batch_size=16, target_size=(3
                 # Apply class-aware / conditional augmentations if enabled
                 if augment:
                     label = row.get('classification_encoded', None)
-                    img = augment_image(img, label=label)
+                    img = augment_image(img, label_code=label)
 
                 # Apply model-specific preprocessing (e.g., EfficientNet preprocess_input)
                 if preprocess_fn is not None:
