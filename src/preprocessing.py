@@ -38,38 +38,32 @@ def preprocess_metadata(df, numerical_cols, categorical_cols):
 
 def resize_with_padding(img, target_size=(300, 300)):
     """
-    Resizes an image maintaining aspect ratio strictly without stretching,
-    padding the remaining canvas with black borders (e.g., top/bottom).
+    Resizes an image maintaining its aspect ratio strictly.
+    Places the scaled image on a black canvas to pad top/bottom or sides without stretching.
     """
-    target_h, target_w = target_size
     h, w = img.shape[:2]
-    
-    # Calculate scale factor to fit within target bounds without stretching
-    scale = min(target_w / float(w), target_h / float(h))
-    new_w = max(1, int(round(w * scale)))
-    new_h = max(1, int(round(h * scale)))
-    
-    # Resize with aspect ratio preserved
-    resized_img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR)
-    
-    # Calculate required padding
-    pad_h = target_h - new_h
-    pad_w = target_w - new_w
-    
-    top = pad_h // 2
-    bottom = pad_h - top
-    left = pad_w // 2
-    right = pad_w - left
-    
-    # Apply black padding (0,0,0) around the resized image
-    padded_img = cv2.copyMakeBorder(
-        resized_img, 
-        top, bottom, left, right, 
-        borderType=cv2.BORDER_CONSTANT, 
-        value=[0, 0, 0]
-    )
-    
-    return padded_img
+    target_h, target_w = target_size
+
+    # Calculate uniform scaling factor to fit inside target dimensions
+    scale = min(target_w / w, target_h / h)
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+
+    # Resize preserving aspect ratio
+    interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
+    resized = cv2.resize(img, (new_w, new_h), interpolation=interp)
+
+    # Create solid black canvas
+    canvas = np.zeros((target_h, target_w, 3), dtype=np.uint8)
+
+    # Calculate centering coordinates
+    top = (target_h - new_h) // 2
+    left = (target_w - new_w) // 2
+
+    # Embed resized image into canvas
+    canvas[top:top + new_h, left:left + new_w] = resized
+
+    return canvas
 
 def load_and_preprocess_image(img_path, data_origin, target_size=(300, 300)):
     """Loads image and applies specific resizing logic based on the data origin."""    
