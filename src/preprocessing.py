@@ -97,8 +97,7 @@ def augment_image(img_tensor, label_code):
         
     return tf.clip_by_value(img_tensor, 0.0, 255.0)
 
-def create_multimodal_generator(df, metadata_cols, batch_size=16, target_size=(300, 300), 
-                                augment=False, preprocess_fn=None):
+def create_multimodal_generator(df, metadata_cols, batch_size=16, target_size=(300, 300), augment=False, preprocess_fn=None):
     """
     Custom generator yields [images, metadata] and classification targets.
     Supports class-aware image augmentations for training.
