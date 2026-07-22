@@ -3,10 +3,9 @@ import os
 import pandas as pd
 import numpy as np
 import cv2
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, MinMaxScaler
-from sklearn.utils import class_weight
 import tensorflow as tf
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+from tensorflow.keras.applications.efficientnet import preprocess_input
 
 def load_and_clean_data(csv_path, img_dir):
     """Loads the dataset and maps filenames natively for Kaggle environment."""
