@@ -36,60 +36,74 @@ def preprocess_metadata(df, numerical_cols, categorical_cols):
         
     return df, scaler, encoders
 
-def resize_with_padding(img, target_size=(300, 300)):
-    """
-    Resizes an image maintaining its aspect ratio strictly.
-    Places the scaled image on a black canvas to pad top/bottom or sides without stretching.
-    """
-    h, w = img.shape[:2]
-    target_h, target_w = target_size
-
-    # Calculate uniform scaling factor to fit inside target dimensions
-    scale = min(target_w / w, target_h / h)
-    new_w = int(w * scale)
-    new_h = int(h * scale)
-
-    # Resize preserving aspect ratio
-    interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
-    resized = cv2.resize(img, (new_w, new_h), interpolation=interp)
-
-    # Create solid black canvas
-    canvas = np.zeros((target_h, target_w, 3), dtype=np.uint8)
-
-    # Calculate centering coordinates
-    top = (target_h - new_h) // 2
-    left = (target_w - new_w) // 2
-
-    # Embed resized image into canvas
-    canvas[top:top + new_h, left:left + new_w] = resized
-
-    return canvas
+def apply_clahe(img):
+    """Applies CLAHE enhancement in LAB color space to boost retinal contrast."""
+    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    cl = clahe.apply(l)
+    enhanced = cv2.cvtColor(cv2.merge((cl, a, b)), cv2.COLOR_LAB2RGB)
+    return enhanced
 
 def load_and_preprocess_image(img_path, data_origin, target_size=(300, 300)):
-    """Loads image and applies specific resizing logic based on the data origin."""    
+    """
+    Loads image, applies CLAHE to ALL sources, and handles padding vs standard resize.
+    """
     try:
         img = cv2.imread(img_path)
         if img is None:
             raise FileNotFoundError(f"Image not found at path: {img_path}")
-        
+            
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
-        # Conditional preprocessing strategy based on origin
-        if data_origin == 'PAPILA':
-            img = resize_with_padding(img, target_size)
-        elif data_origin == 'AUFMC - Lasik':
-            img = cv2.resize(img, target_size) # Normal resize without padding
-        else:
-            # Fallback default if an unexpected origin string occurs
-            img = cv2.resize(img, target_size)
+        # 1. Apply CLAHE contrast enhancement on all images
+        img = apply_clahe(img)
         
+        # 2. Origin-specific spatial resize logic
+        if data_origin == 'PAPILA':
+            img_tensor = tf.convert_to_tensor(img, dtype=tf.float32)
+            padded_tensor = tf.image.resize_with_pad(img_tensor, target_size[0], target_size[1])
+            img = padded_tensor.numpy().astype(np.uint8)
+        else:
+            # AUFMC - Lasik and default fallback
+            img = cv2.resize(img, target_size, interpolation=cv2.INTER_LINEAR)
+            
         return img
     except Exception as e:
-        # Fallback to zeros if image fails to load during training
         return np.zeros((target_size[0], target_size[1], 3), dtype=np.uint8)
+    
+def augment_image(img_tensor, label_code):
+    """
+    Applies image augmentations.
+    Label codes: 0 = Emmetropia, 1 = Myopia, 2 = Hyperopia.
+    Emmetropia (0) and Hyperopia (2) get extra heavy augmentations.
+    """
+    # Standard Augmentations (All Classes)
+    img_tensor = tf.image.random_flip_left_right(img_tensor)
+    img_tensor = tf.image.random_flip_up_down(img_tensor)
+    img_tensor = tf.image.random_brightness(img_tensor, max_delta=0.15)
+    img_tensor = tf.image.random_contrast(img_tensor, lower=0.85, upper=1.15)
+    
+    # Heavy Augmentations specifically for minority/target classes (Emmetropia & Hyperopia)
+    if label_code in [0, 2]:
+        # Random rotation (90-degree increments or slight shifts)
+        k = tf.random.uniform(shape=[], minval=0, maxval=4, dtype=tf.int32)
+        img_tensor = tf.image.rot90(img_tensor, k=k)
+        
+        # Random hue variation
+        img_tensor = tf.image.random_hue(img_tensor, max_delta=0.05)
+        
+        # Random saturation shift
+        img_tensor = tf.image.random_saturation(img_tensor, lower=0.8, upper=1.2)
+        
+    return tf.clip_by_value(img_tensor, 0.0, 255.0)
 
-def create_multimodal_generator(df, numerical_cols, batch_size=16, target_size=(300, 300), preprocess_fn=None):
-    """Custom generator yields [images, metadata] and targets."""
+def create_multimodal_generator(df, metadata_cols, batch_size=16, target_size=(300, 300), 
+                                augment=False, preprocess_fn=preprocess_input):
+    """
+    Custom generator yields [images, metadata] and classification targets.
+    Supports class-aware image augmentations for training.
+    """
     num_samples = len(df)
     while True:
         df_shuffled = df.sample(frac=1).reset_index(drop=True)
@@ -101,17 +115,25 @@ def create_multimodal_generator(df, numerical_cols, batch_size=16, target_size=(
             labels = []
             
             for _, row in batch_df.iterrows():
-                # Extract the data_origin variable from the current row
                 origin = row['data_origin']
+                label_code = row['classification_encoded']
                 
-                # Pass data_origin into the updated loader
+                # Load and preprocess base image
                 img = load_and_preprocess_image(row['full_path'], data_origin=origin, target_size=target_size)
+                img_tensor = tf.convert_to_tensor(img, dtype=tf.float32)
                 
+                # Apply class-specific augmentations if enabled
+                if augment:
+                    img_tensor = augment_image(img_tensor, label_code)
+                
+                # EfficientNet normalizations
                 if preprocess_fn:
-                    img = preprocess_fn(img)
+                    img_processed = preprocess_fn(img_tensor.numpy())
+                else:
+                    img_processed = img_tensor.numpy()
                     
-                images.append(img)
-                metadata.append(row[numerical_cols].values.astype(np.float32))
-                labels.append(row['classification'])
+                images.append(img_processed)
+                metadata.append(row[metadata_cols].values.astype(np.float32))
+                labels.append(label_code)
                 
             yield [np.array(images), np.array(metadata)], np.array(labels)
