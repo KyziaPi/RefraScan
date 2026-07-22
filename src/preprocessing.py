@@ -99,39 +99,64 @@ def augment_image(img_tensor, label_code):
 
 def create_multimodal_generator(df, metadata_cols, batch_size=16, target_size=(300, 300), augment=False, preprocess_fn=None):
     """
-    Custom generator yields [images, metadata] and classification targets.
-    Supports class-aware image augmentations for training.
+    Generator yielding multi-modal inputs: (images, metadata) and targets.
+    Handles numeric columns (e.g., 'age') and converts categorical text columns
+    (e.g., 'data_origin') via one-hot encoding into a numerical matrix.
     """
+    df = df.copy()
+    
+    # Pre-process metadata columns: handle categorical string variables via One-Hot Encoding
+    processed_meta = []
+    for col in metadata_cols:
+        if df[col].dtype == 'object' or isinstance(df[col].dtype, pd.CategoricalDtype):
+            # One-hot encode string/categorical columns (e.g., data_origin)
+            dummies = pd.get_dummies(df[col], prefix=col, drop_first=False)
+            processed_meta.append(dummies)
+        else:
+            # Numeric columns (e.g., age)
+            processed_meta.append(df[[col]])
+            
+    # Concatenate processed metadata into a single DataFrame and convert safely to float32
+    metadata_df = pd.concat(processed_meta, axis=1)
+    metadata_matrix = metadata_df.values.astype(np.float32)
+
     num_samples = len(df)
+
     while True:
-        df_shuffled = df.sample(frac=1).reset_index(drop=True)
-        for offset in range(0, num_samples, batch_size):
-            batch_df = df_shuffled.iloc[offset:offset+batch_size]
-            
+        # Shuffle indices each epoch
+        indices = np.arange(num_samples)
+        np.random.shuffle(indices)
+
+        for start_idx in range(0, num_samples, batch_size):
+            batch_indices = indices[start_idx:start_idx + batch_size]
+            batch_df = df.iloc[batch_indices]
+            batch_meta = metadata_matrix[batch_indices]
+
             images = []
-            metadata = []
-            labels = []
-            
-            for _, row in batch_df.iterrows():
-                origin = row['data_origin']
-                label_code = row['classification_encoded']
+            targets = []
+
+            for idx, (_, row) in enumerate(batch_df.iterrows()):
+                # Load image (assuming load_and_preprocess_image is defined in your preprocessing module)
+                img = load_and_preprocess_image(row['image_path'], target_size=target_size)
                 
-                # Load and preprocess base image
-                img = load_and_preprocess_image(row['full_path'], data_origin=origin, target_size=target_size)
-                img_tensor = tf.convert_to_tensor(img, dtype=tf.float32)
-                
-                # Apply class-specific augmentations if enabled
+                # Apply class-aware / conditional augmentations if enabled
                 if augment:
-                    img_tensor = augment_image(img_tensor, label_code)
-                
-                # EfficientNet normalizations
-                if preprocess_fn:
-                    img_processed = preprocess_fn(img_tensor.numpy())
-                else:
-                    img_processed = img_tensor.numpy()
-                    
-                images.append(img_processed)
-                metadata.append(row[metadata_cols].values.astype(np.float32))
-                labels.append(label_code)
-                
-            yield [np.array(images), np.array(metadata)], np.array(labels)
+                    label = row.get('classification_encoded', None)
+                    img = augment_image(img, label=label)
+
+                # Apply model-specific preprocessing (e.g., EfficientNet preprocess_input)
+                if preprocess_fn is not None:
+                    img = preprocess_fn(img)
+
+                images.append(img)
+
+                if 'classification_encoded' in row:
+                    targets.append(row['classification_encoded'])
+
+            batch_images = np.array(images, dtype=np.float32)
+            batch_targets = np.array(targets, dtype=np.int32) if targets else None
+
+            if batch_targets is not None:
+                yield [batch_images, batch_meta], batch_targets
+            else:
+                yield [batch_images, batch_meta]
