@@ -51,6 +51,7 @@ def run_cross_validation(
     n_splits: int = 10,
     batch_size: int = 16,
     epochs: int = 30,
+    learning_rate: float = 0.0001,
     holdout_test_size: float = 0.15,
 ):
     """Executes 10-Fold CV with an isolated Holdout Test Set."""
@@ -145,7 +146,7 @@ def run_cross_validation(
             train_ds=train_gen,
             val_ds=val_gen,
             epochs=epochs,
-            learning_rate=0.0001,
+            learning_rate=learning_rate,
             steps_per_epoch=steps_per_epoch,
             validation_steps=validation_steps,
             save_path=fold_model_path
