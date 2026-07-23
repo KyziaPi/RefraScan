@@ -1,35 +1,58 @@
-# src/train.py
-from tensorflow.keras.applications.efficientnet import preprocess_input as effnet_preprocess
-from tensorflow.keras.applications.resnet50 import preprocess_input as resnet_preprocess
-from tensorflow.keras.applications.densenet import preprocess_input as densenet_preprocess
+import os
+import tensorflow as tf
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 
-from src.models import build_efficientnet, build_resnet50, build_densenet121
+def train_model(
+    model,
+    train_ds,
+    val_ds,
+    epochs=50,
+    learning_rate=0.0001,
+    steps_per_epoch=None,
+    validation_steps=None,
+    save_path="models/best_model.h5"
+):
+    """
+    Compiles the model, configures early stopping and checkpoints, 
+    and executes training on the provided datasets/generators.
+    """
+    # Ensure saving directory exists
+    dir_name = os.path.dirname(save_path)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
 
-MODEL_CONFIGS = {
-    "efficientnetb3": {
-        "target_size": (300, 300),
-        "preprocess_fn": effnet_preprocess,
-        "builder": build_efficientnet
-    },
-    "resnet50": {
-        "target_size": (224, 224),
-        "preprocess_fn": resnet_preprocess,
-        "builder": build_resnet50
-    },
-    "densenet121": {
-        "target_size": (224, 224),
-        "preprocess_fn": densenet_preprocess,
-        "builder": build_densenet121
-    }
-}
+    # 1. Compile model
+    optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+    model.compile(
+        optimizer=optimizer,
+        loss='sparse_categorical_crossentropy',
+        metrics=['accuracy']
+    )
 
-# Inside train():
-builder_fn = config["builder"]
+    # 2. Callbacks
+    callbacks = [
+        EarlyStopping(
+            monitor='val_loss',
+            patience=7,
+            restore_best_weights=True,
+            verbose=1
+        ),
+        ModelCheckpoint(
+            filepath=save_path,
+            monitor='val_loss',
+            save_best_only=True,
+            verbose=1
+        )
+    ]
 
-model = builder_fn(
-    input_image_shape=(*target_size, 3),
-    num_metadata_features=num_meta_features,
-    num_classes=3,
-    learning_rate=learning_rate,
-    dropout_rate=dropout_rate
-)
+    # 3. Fit model & Save best weights (handled via ModelCheckpoint)
+    history = model.fit(
+        train_ds,
+        steps_per_epoch=steps_per_epoch,
+        validation_data=val_ds,
+        validation_steps=validation_steps,
+        epochs=epochs,
+        callbacks=callbacks
+    )
+
+    return history
