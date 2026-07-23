@@ -152,10 +152,9 @@ def augment_image(img, class_weight=1.0, label_code=None):
 def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16, target_size=(300, 300), augment=False, preprocess_fn=None):
     """
     Generator yielding multi-modal inputs: (images, metadata) and targets.
-    Handles numeric columns (e.g., 'age') and converts categorical text columns
-    (e.g., 'data_origin') via one-hot encoding into a numerical matrix.
+    Handles numeric columns (e.g., 'age')
     """
-    df = df.copy()
+    df_copy = df.copy().reset_index(drop=True)
     
     # Pre-process metadata columns: handle categorical string variables via One-Hot Encoding
     processed_meta = []
@@ -173,63 +172,82 @@ def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16,
     metadata_matrix = metadata_df.values.astype(np.float32)
 
     num_samples = len(df)
+    
+    # Group indices by class for balanced sampling
+    class_indices = {
+        c: df_copy[df_copy["classification_encoded"] == c].index.tolist()
+        for c in df_copy["classification_encoded"].unique()
+    }
 
     while True:
-        # Shuffle indices each epoch
-        indices = np.arange(num_samples)
-        np.random.shuffle(indices)
+        images = []
+        metadata = []
+        targets = []
 
-        for start_idx in range(0, num_samples, batch_size):
-            batch_indices = indices[start_idx:start_idx + batch_size]
-            batch_df = df.iloc[batch_indices]
-            batch_meta = metadata_matrix[batch_indices]
+        if augment:
+            # --- TRAINING MODE: Equal Class-Balanced Sampling ---
+            samples_per_class = batch_size // len(class_indices)
+            selected_indices = []
 
-            images = []
-            targets = []
+            for c, idxs in class_indices.items():
+                # Oversample minority classes with replacement
+                selected_indices.extend(
+                    np.random.choice(idxs, size=samples_per_class, replace=True)
+                )
 
-            for idx, (_, row) in enumerate(batch_df.iterrows()):
-                # Load image
-                img = load_and_preprocess_image(row['full_path'], target_size=target_size)
-                
-                # Apply class-aware / conditional augmentations if enabled
-                if augment:
-                    label = row.get('classification_encoded', None)
-                    
-                    # Retrieve class weight from class_weights
-                    weight = class_weights.get(label)
-                    
-                    img = augment_image(img, class_weight=weight, label_code=label)
+            # Fill any remainder slots to match exact batch_size
+            remaining = batch_size - len(selected_indices)
+            if remaining > 0:
+                selected_indices.extend(
+                    np.random.choice(df_copy.index, size=remaining, replace=True)
+                )
 
-                # Apply model-specific preprocessing (e.g., EfficientNet preprocess_input)
-                if preprocess_fn is not None:
-                    img = preprocess_fn(img)
+            np.random.shuffle(selected_indices)
+        else:
+            # --- VAL / TEST MODE: Sequential / Standard Sampling ---
+            selected_indices = np.random.choice(
+                df_copy.index, size=batch_size, replace=False
+            )
 
-                images.append(img)
+        for idx in selected_indices:
+            row = df_copy.iloc[idx]
 
-                if 'classification_encoded' in row:
-                    targets.append(row['classification_encoded'])
+            # 1. Load image
+            img_path = row["image_path"]
+            img = cv2.imread(img_path)
+            if img is None:
+                continue
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = cv2.resize(img, (300, 300))
 
-            batch_images = np.array(images, dtype=np.float32)
-            batch_targets = np.array(targets, dtype=np.int32) if targets else None
+            # 2. Extract label & apply balanced augmentation
+            label = row.get("classification_encoded", None)
+            if augment:
+                weight = class_weights.get(label, 1.0) if class_weights else 1.0
+                img = augment_image(img, class_weight=weight, label_code=label)
 
-            if batch_targets is not None:
-                # If class_weights are provided, compute sample weights for the batch
-                if class_weights is not None:
-                    batch_sample_weights = np.array(
-                        [class_weights[t] for t in batch_targets],
-                        dtype=np.float32,
-                    )
-                    # Yield 3-tuple: (inputs, targets, sample_weights)
-                    yield (
-                        (batch_images, batch_meta),
-                        batch_targets,
-                        batch_sample_weights,
-                    )
-                else:
-                    # Yield 2-tuple for unweighted evaluation (e.g. Val / Test)
-                    yield (batch_images, batch_meta), batch_targets
-            else:
-                yield (batch_images, batch_meta)
+            # 3. Preprocess image
+            if preprocess_fn:
+                img = preprocess_fn(img)
+
+            images.append(img)
+
+            # 4. Extract metadata
+            meta_feat = row[metadata_cols].values.astype(np.float32)
+            metadata.append(meta_feat)
+
+            if label is not None:
+                targets.append(label)
+
+        # Convert to arrays and yield
+        batch_images = np.array(images, dtype=np.float32)
+        batch_meta = np.array(metadata, dtype=np.float32)
+        batch_targets = np.array(targets, dtype=np.int32) if targets else None
+
+        if batch_targets is not None:
+            yield (batch_images, batch_meta), batch_targets
+        else:
+            yield (batch_images, batch_meta)
 
 def split_data_by_patient(df, patient_col='ID', target_col='classification_encoded', test_size=0.30, val_ratio=0.50, random_state=42):
     """
