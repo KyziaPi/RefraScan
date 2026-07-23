@@ -210,9 +210,9 @@ def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16,
             batch_targets = np.array(targets, dtype=np.int32) if targets else None
 
             if batch_targets is not None:
-                yield [batch_images, batch_meta], batch_targets
+                yield (batch_images, batch_meta), batch_targets
             else:
-                yield [batch_images, batch_meta]
+                yield (batch_images, batch_meta)
 
 def split_data_by_patient(df, patient_col='ID', target_col='classification_encoded', test_size=0.30, val_ratio=0.50, random_state=42):
     """
