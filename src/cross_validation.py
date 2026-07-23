@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import StratifiedGroupKFold
+import math
+from sklearn.model_selection import StratifiedGroupKFold, train_test_split
 
 from src.preprocessing import (
     calculate_class_weights,
@@ -11,6 +12,35 @@ from src.models import build_model
 from src.train import train_model
 from src.evaluate import evaluate_model
 
+def split_holdout_test(
+    df: pd.DataFrame,
+    patient_col: str = "ID",
+    target_col: str = "classification_encoded",
+    test_size: float = 0.15,
+    random_state: int = 42,
+):
+  """Splits dataframe into 85% CV pool and 15% Holdout Test Set strictly by patient ID."""
+  df = df.copy()
+
+  patient_classes = df.groupby(patient_col)[target_col].first()
+  unique_ids = patient_classes.index.values
+  unique_labels = patient_classes.values
+
+  train_cv_ids, test_ids = train_test_split(
+      unique_ids,
+      test_size=test_size,
+      stratify=unique_labels,
+      random_state=random_state,
+  )
+
+  cv_df = df[df[patient_col].isin(train_cv_ids)].copy().reset_index(drop=True)
+  test_df = df[df[patient_col].isin(test_ids)].copy().reset_index(drop=True)
+
+  print(
+      f"Dataset Split: {len(cv_df)} samples for 10-Fold CV | {len(test_df)}"
+      f" samples in Holdout Test Set ({test_size * 100:.0f}%)"
+  )
+  return cv_df, test_df
 
 def run_cross_validation(
     df: pd.DataFrame,
@@ -21,39 +51,44 @@ def run_cross_validation(
     n_splits: int = 10,
     batch_size: int = 16,
     epochs: int = 30,
+    holdout_test_size: float = 0.15,
 ):
-    """Executes k-fold cross-validation using StratifiedGroupKFold."""
+    """Executes 10-Fold CV with an isolated Holdout Test Set."""
+    
+    # 1. First, isolate 15% Holdout Test Set by Patient ID (No patient overlap)
+    cv_df, holdout_test_df = split_holdout_test(
+        df,
+        patient_col=patient_col,
+        target_col=target_col,
+        test_size=holdout_test_size,
+    )
     
     sgkf = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=42)
     
-    # Store metrics for each fold
-    fold_metrics = {
-        "accuracy": [],
-        "precision": [],
-        "recall": [],
-        "f1": []
-    }
+    # Tracking metrics
+    val_metrics = {"accuracy": [], "precision": [], "recall": [], "f1": []}
+    test_metrics = {"accuracy": [], "precision": [], "recall": [], "f1": []}
 
-    print(f"\n{'='*50}")
+    print(f"\n{'='*55}")
     print(f"STARTING {n_splits}-FOLD CROSS VALIDATION")
-    print(f"{'='*50}\n")
+    print(f"{'='*55}\n")
 
     for fold, (train_idx, val_idx) in enumerate(
-        sgkf.split(df, y=df[target_col], groups=df[patient_col])
+        sgkf.split(cv_df, y=cv_df[target_col], groups=cv_df[patient_col])
     ):
         print(f"\n--- Fold {fold + 1}/{n_splits} ---")
-        
+
         # 1. Split data for the current fold
-        train_df = df.iloc[train_idx].copy()
-        val_df = df.iloc[val_idx].copy()
+        train_df = cv_df.iloc[train_idx].copy()
+        val_df = cv_df.iloc[val_idx].copy()
 
         # 2. Prevent Data Leakage: Scale age strictly using the fold's training set
-        train_df, val_df = scale_age_feature(
-            train_df,
-            val_df,
-            test_df=None,
+        train_df, val_df, current_test_df = scale_age_feature(
+            train_df=train_df,
+            val_df=val_df,
+            test_df=holdout_test_df.copy(),
             age_col="age",
-            scaler_save_path=None  # Not saving the scaler for now
+            scaler_save_path=f"scaler_fold_{fold + 1}.pkl"
         )
         
         metadata_cols = ["age_scaled"]
@@ -78,6 +113,19 @@ def run_cross_validation(
             augment=False, 
             preprocess_fn=preprocess_input
         )
+        test_gen = create_multimodal_generator(
+        current_test_df,
+        metadata_cols,
+        class_weights=None,
+        batch_size=batch_size,
+        augment=False,
+        preprocess_fn=preprocess_input,
+        )
+        
+        # Calculate steps per epoch based on dataset lengths and batch size
+        steps_per_epoch = math.ceil(len(train_df) / batch_size)
+        validation_steps = math.ceil(len(val_df) / batch_size)
+        test_steps = math.ceil(len(current_test_df) / batch_size)
 
         # 5. Build a fresh model for each fold
         model = build_model(
@@ -89,6 +137,7 @@ def run_cross_validation(
         )
 
         fold_model_path = f"best_{model_name}_fold_{fold + 1}.h5"
+        
 
         # 6. Train the model
         train_model(
@@ -97,31 +146,60 @@ def run_cross_validation(
             val_ds=val_gen,
             epochs=epochs,
             learning_rate=0.0001,
+            steps_per_epoch=steps_per_epoch,
+            validation_steps=validation_steps,
             save_path=fold_model_path
         )
 
         # 7. Evaluate the best model on the fold's validation set
         model.load_weights(fold_model_path)
-        metrics = evaluate_model(
-            model=model, 
-            test_ds=val_gen, 
-            class_names=["Emmetropia", "Myopia", "Hyperopia"]
+        print("\n[Validation Set Evaluation]")
+        v_res = evaluate_model(
+            model=model,
+            test_ds=val_gen,
+            steps=validation_steps,
+            y_true=val_df[target_col].values,
+            class_names=["Emmetropia", "Myopia", "Hyperopia"],
+        )
+        
+        # 8. Evaluate on Holdout Test Set
+        print("\n[Holdout Test Set Evaluation]")
+        t_res = evaluate_model(
+            model=model,
+            test_ds=test_gen,
+            steps=test_steps,
+            y_true=current_test_df[target_col].values,
+            class_names=["Emmetropia", "Myopia", "Hyperopia"],
         )
 
-        # 8. Store results
-        fold_metrics["accuracy"].append(metrics.get("accuracy", 0))
-        fold_metrics["precision"].append(metrics.get("precision", 0))
-        fold_metrics["recall"].append(metrics.get("recall", 0))
-        fold_metrics["f1"].append(metrics.get("f1", 0))
+        # 9. Store results
+        for m in ["accuracy", "precision", "recall", "f1"]:
+            val_metrics[m].append(v_res.get(m, 0))
+            test_metrics[m].append(t_res.get(m, 0))
 
     # 9. Calculate and display final average metrics
     print(f"\n{'='*50}")
     print(f"CROSS VALIDATION RESULTS ({n_splits} Folds)")
     print(f"{'='*50}")
     
-    print(f"Average Accuracy  : {np.mean(fold_metrics['accuracy']):.4f} ± {np.std(fold_metrics['accuracy']):.4f}")
-    print(f"Average Precision : {np.mean(fold_metrics['precision']):.4f} ± {np.std(fold_metrics['precision']):.4f}")
-    print(f"Average Recall    : {np.mean(fold_metrics['recall']):.4f} ± {np.std(fold_metrics['recall']):.4f}")
-    print(f"Average F1 Score  : {np.mean(fold_metrics['f1']):.4f} ± {np.std(fold_metrics['f1']):.4f}")
-        
-    return fold_metrics
+    print(f"\n{'=' * 55}")
+    print(
+        f"FINAL CROSS-VALIDATION SUMMARY ({n_splits} Folds + Holdout Test Set)"
+    )
+    print(f"{'=' * 55}")
+
+    print("\n--- Validation Performance (Averaged across Folds) ---")
+    for m in ["accuracy", "precision", "recall", "f1"]:
+        print(
+            f"Mean Val {m.capitalize():<10}: {np.mean(val_metrics[m]):.4f} ±"
+            f" {np.std(val_metrics[m]):.4f}"
+        )
+
+    print("\n--- Holdout Test Performance (Averaged across Fold Models) ---")
+    for m in ["accuracy", "precision", "recall", "f1"]:
+        print(
+            f"Mean Test {m.capitalize():<9}: {np.mean(test_metrics[m]):.4f} ±"
+            f" {np.std(test_metrics[m]):.4f}"
+        )
+
+    return {"val_metrics": val_metrics, "test_metrics": test_metrics}
