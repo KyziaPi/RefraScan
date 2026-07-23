@@ -148,7 +148,6 @@ def run_cross_validation(
             learning_rate=0.0001,
             steps_per_epoch=steps_per_epoch,
             validation_steps=validation_steps,
-            class_weights=class_weights,
             save_path=fold_model_path
         )
 

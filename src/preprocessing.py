@@ -213,7 +213,21 @@ def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16,
             batch_targets = np.array(targets, dtype=np.int32) if targets else None
 
             if batch_targets is not None:
-                yield (batch_images, batch_meta), batch_targets
+                # If class_weights are provided, compute sample weights for the batch
+                if class_weights is not None:
+                    batch_sample_weights = np.array(
+                        [class_weights[t] for t in batch_targets],
+                        dtype=np.float32,
+                    )
+                    # Yield 3-tuple: (inputs, targets, sample_weights)
+                    yield (
+                        (batch_images, batch_meta),
+                        batch_targets,
+                        batch_sample_weights,
+                    )
+                else:
+                    # Yield 2-tuple for unweighted evaluation (e.g. Val / Test)
+                    yield (batch_images, batch_meta), batch_targets
             else:
                 yield (batch_images, batch_meta)
 
