@@ -114,12 +114,12 @@ def run_cross_validation(
             preprocess_fn=preprocess_input
         )
         test_gen = create_multimodal_generator(
-        current_test_df,
-        metadata_cols,
-        class_weights=None,
-        batch_size=batch_size,
-        augment=False,
-        preprocess_fn=preprocess_input,
+            current_test_df,
+            metadata_cols,
+            class_weights=None,
+            batch_size=batch_size,
+            augment=False,
+            preprocess_fn=preprocess_input,
         )
         
         # Calculate steps per epoch based on dataset lengths and batch size
@@ -148,6 +148,7 @@ def run_cross_validation(
             learning_rate=0.0001,
             steps_per_epoch=steps_per_epoch,
             validation_steps=validation_steps,
+            class_weights=class_weights,
             save_path=fold_model_path
         )
 

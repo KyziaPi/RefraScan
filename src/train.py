@@ -10,6 +10,7 @@ def train_model(
     learning_rate=0.0001,
     steps_per_epoch=None,
     validation_steps=None,
+    class_weights=None,
     save_path=None
 ):
     """
@@ -56,6 +57,7 @@ def train_model(
         steps_per_epoch=steps_per_epoch,
         validation_data=val_ds,
         validation_steps=validation_steps,
+        class_weight=class_weights,
         epochs=epochs,
         callbacks=callbacks
     )
