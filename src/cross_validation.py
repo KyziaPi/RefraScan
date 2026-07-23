@@ -16,6 +16,7 @@ from src.evaluate import evaluate_model
 def run_cross_validation(
     df: pd.DataFrame,
     model_name: str = "efficientnet",
+    preprocess_input: callable = None,
     patient_col: str = "ID",
     target_col: str = "classification_encoded",
     n_splits: int = 10,
