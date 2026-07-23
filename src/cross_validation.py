@@ -88,7 +88,7 @@ def run_cross_validation(
             dropout_rate=0.4
         )
 
-        fold_model_path = f"models/best_model_fold_{fold + 1}.h5"
+        fold_model_path = f"best_{model_name}_fold_{fold + 1}.h5"
 
         # 6. Train the model
         train_model(
