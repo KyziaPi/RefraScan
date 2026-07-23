@@ -55,8 +55,10 @@ def load_and_preprocess_image(img_path, data_origin, target_size=(300, 300)):
         if img is None:
             raise FileNotFoundError(f"Image not found at path: {img_path}")
             
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        # 1. Apply CLAHE contrast enhancement on all images
+        #img = apply_clahe(img)
         
+        # 2. Resize image
         img_tensor = tf.convert_to_tensor(img, dtype=tf.float32)
         padded_tensor = tf.image.resize_with_pad(img_tensor, target_size[0], target_size[1])
         img = padded_tensor.numpy().astype(np.uint8)
