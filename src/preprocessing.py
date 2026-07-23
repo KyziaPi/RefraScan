@@ -7,6 +7,7 @@ import random
 import tensorflow as tf
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 from sklearn.model_selection import train_test_split
+from sklearn.utils import class_weight
 
 def load_and_clean_data(csv_path, img_dir):
     """Loads the dataset and maps filenames natively for Kaggle environment."""
@@ -48,7 +49,7 @@ def apply_clahe(img):
 
 def load_and_preprocess_image(img_path, target_size=(300, 300)):
     """
-    Loads image, applies CLAHE to ALL sources, and handles padding vs standard resize.
+    Loads image, and handles padding vs standard resize.
     """
     try:
         img = cv2.imread(img_path)
@@ -265,3 +266,11 @@ def split_data_by_patient(df, patient_col='ID', target_col='classification_encod
     test_df = df[df[patient_col].isin(test_ids)].copy().reset_index(drop=True)
 
     return train_df, val_df, test_df
+
+def calculate_class_weights(df, target_col):
+    """Helper to balance gradients against clinical minority classes."""
+    classes = np.unique(df[target_col])
+    weights = class_weight.compute_class_weight(class_weight='balanced', 
+                                                 classes=classes, 
+                                                 y=df[target_col].values)
+    return dict(zip(classes, weights))
