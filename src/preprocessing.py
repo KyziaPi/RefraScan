@@ -46,7 +46,7 @@ def apply_clahe(img):
     enhanced = cv2.cvtColor(cv2.merge((cl, a, b)), cv2.COLOR_LAB2RGB)
     return enhanced
 
-def load_and_preprocess_image(img_path, data_origin, target_size=(300, 300)):
+def load_and_preprocess_image(img_path, target_size=(300, 300)):
     """
     Loads image, applies CLAHE to ALL sources, and handles padding vs standard resize.
     """
@@ -55,6 +55,8 @@ def load_and_preprocess_image(img_path, data_origin, target_size=(300, 300)):
         if img is None:
             raise FileNotFoundError(f"Image not found at path: {img_path}")
             
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        
         # 1. Apply CLAHE contrast enhancement on all images
         #img = apply_clahe(img)
         
