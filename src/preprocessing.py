@@ -191,7 +191,7 @@ def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16,
 
             for idx, (_, row) in enumerate(batch_df.iterrows()):
                 # Load image
-                img = load_and_preprocess_image(row['full_path'], row['data_origin'], target_size=target_size)
+                img = load_and_preprocess_image(row['full_path'], target_size=target_size)
                 
                 # Apply class-aware / conditional augmentations if enabled
                 if augment:
