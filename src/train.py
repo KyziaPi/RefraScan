@@ -2,6 +2,32 @@ import os
 import tensorflow as tf
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 
+class SparseCategoricalFocalLoss(tf.keras.losses.Loss):
+  """Custom Focal Loss that accepts sparse integer targets (0, 1, 2)."""
+
+  def __init__(self, gamma=2.0, name="sparse_categorical_focal_loss"):
+    super().__init__(name=name)
+    self.gamma = gamma
+
+  def call(self, y_true, y_pred):
+    y_true = tf.cast(y_true, tf.int32)
+    y_true = tf.reshape(y_true, [-1])
+
+    # Clip predictions to prevent numerical instability log(0)
+    y_pred = tf.clip_by_value(y_pred, 1e-7, 1.0 - 1e-7)
+
+    # Convert integer labels to one-hot vectors
+    num_classes = tf.shape(y_pred)[-1]
+    y_true_one_hot = tf.one_hot(y_true, depth=num_classes)
+
+    # Extract prediction probability corresponding to the true class
+    p_t = tf.reduce_sum(y_true_one_hot * y_pred, axis=-1)
+
+    # Calculate Focal Loss: - (1 - p_t)^gamma * log(p_t)
+    focal_loss = -tf.pow(1.0 - p_t, self.gamma) * tf.math.log(p_t)
+
+    return tf.reduce_mean(focal_loss)
+
 def train_model(
     model,
     train_ds,
@@ -26,10 +52,7 @@ def train_model(
     if dir_name:
         os.makedirs(dir_name, exist_ok=True)
         
-    loss_fn = tf.keras.losses.SparseCategoricalFocalCrossentropy(
-        gamma=2.0,  # Focus factor: higher values force model to focus on hard samples
-        from_logits=False,
-    )
+    loss_fn = SparseCategoricalFocalLoss(gamma=2.0)
 
     # 1. Compile model
     optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
