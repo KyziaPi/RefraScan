@@ -56,3 +56,19 @@ def build_densenet121(
     To be implemented.
     """
     pass
+
+def build_model(
+    model_name,
+    input_image_shape, 
+    num_metadata_features=1, 
+    num_classes=3,
+    dropout_rate=0.4
+):
+    if model_name == "efficientnet":
+        return build_efficientnet(input_image_shape, num_metadata_features, num_classes, dropout_rate)
+    elif model_name == "resnet50":
+        return build_resnet50(input_image_shape, num_metadata_features, num_classes, dropout_rate)
+    elif model_name == "densenet121":
+        return build_densenet121(input_image_shape, num_metadata_features, num_classes, dropout_rate)
+    else:
+        raise ValueError(f"Unknown model name: {model_name}. Choose from 'efficientnet', 'resnet50', or 'densenet121'.")

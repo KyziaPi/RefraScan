@@ -1,4 +1,3 @@
-import os
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import StratifiedGroupKFold
@@ -9,13 +8,14 @@ from src.preprocessing import (
     preprocess_input,
     scale_age_feature,
 )
-from src.models import build_efficientnet
+from src.models import build_model
 from src.train import train_model
 from src.evaluate import evaluate_model
 
 
 def run_cross_validation(
     df: pd.DataFrame,
+    model_name: str = "efficientnet",
     patient_col: str = "ID",
     target_col: str = "classification_encoded",
     n_splits: int = 10,
@@ -80,7 +80,8 @@ def run_cross_validation(
         )
 
         # 5. Build a fresh model for each fold
-        model = build_efficientnet(
+        model = build_model(
+            model_name=model_name,
             input_image_shape=(300, 300, 3), 
             num_metadata_features=len(metadata_cols), 
             num_classes=3,
