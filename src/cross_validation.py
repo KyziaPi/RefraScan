@@ -5,7 +5,6 @@ from sklearn.model_selection import StratifiedGroupKFold
 from src.preprocessing import (
     calculate_class_weights,
     create_multimodal_generator,
-    preprocess_input,
     scale_age_feature,
 )
 from src.models import build_model
