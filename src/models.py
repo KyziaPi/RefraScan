@@ -4,7 +4,7 @@ from tensorflow.keras.applications import EfficientNetB3
 
 def build_efficientnet(
     input_image_shape=(300, 300, 3), 
-    num_metadata_features=5, 
+    num_metadata_features=1, 
     num_classes=3,
     dropout_rate=0.4
 ):
@@ -34,7 +34,7 @@ def build_efficientnet(
 
 def build_resnet50(
     input_image_shape=(224, 224, 3), 
-    num_metadata_features=5, 
+    num_metadata_features=1, 
     num_classes=3,
     dropout_rate=0.4
 ):
@@ -47,7 +47,7 @@ def build_resnet50(
 
 def build_densenet121(
     input_image_shape=(224, 224, 3), 
-    num_metadata_features=5, 
+    num_metadata_features=1, 
     num_classes=3,
     dropout_rate=0.4
 ):
