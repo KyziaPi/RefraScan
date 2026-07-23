@@ -80,9 +80,11 @@ def augment_image(img_tensor, class_weight=1.0, label_code=None):
       - Small zoom (crop & resize)
       - Small translation (shift)
     """
-    # Ensure tensor is float32 to prevent clip_by_value uint8 errors
-    img_tensor = tf.cast(img_tensor, tf.float32)
-
+    # # Ensure tensor/array is converted to float32 NumPy array for processing
+    img_np = (
+        img_tensor.numpy() if hasattr(img_tensor, "numpy") else np.array(img_tensor)
+    ).astype(np.float32)
+    
     # 1. Determine maximum allowed transformations based on label_code
     # (Mapping: 0=Emmetropia, 1=Myopia, 2=Hyperopia)
     if label_code == 1:       # Myopia
@@ -100,41 +102,43 @@ def augment_image(img_tensor, class_weight=1.0, label_code=None):
     # 2. Define pool of mild transformation functions
     # Intensity factor scales linearly with class_weight (clamped between 0.5 and 1.5)
     intensity = max(0.5, min(float(class_weight), 1.5))
+    h, w = img_np.shape[:2]
 
     def apply_rotation(img):
         # Angle ranges between ±(8° * intensity) up to ±15° max
         angle_deg = random.uniform(-10.0, 10.0) * intensity
-        angle_rad = angle_deg * (3.14159265 / 180.0)
-        # Using tfa/tf.image rotation or standard tf rotation fill
-        return tf.image.stateless_random_brightness(img, max_delta=0.0, seed=(1, 2)) # structural placeholder/pure spatial fallback if needed
+        M = cv2.getRotationMatrix2D((w / 2, h / 2), angle_deg, 1.0)
+        return cv2.warpAffine(img, M, (w, h), borderMode=cv2.BORDER_REFLECT)
 
     def apply_flip(img):
-        return tf.image.flip_left_right(img)
+        return cv2.flip(img, 1)
 
     def apply_brightness_contrast(img):
         # Small delta scaled by class weight
         max_delta = 0.08 * intensity
-        img = tf.image.random_brightness(img, max_delta=max_delta)
-        img = tf.image.random_contrast(img, lower=1.0 - (0.1 * intensity), upper=1.0 + (0.1 * intensity))
-        return img
+        img_t = tf.convert_to_tensor(img, dtype=tf.float32)
+        img_t = tf.image.random_brightness(img_t, max_delta=max_delta)
+        img_t = tf.image.random_contrast(
+            img_t, lower=1.0 - (0.1 * intensity), upper=1.0 + (0.1 * intensity)
+        )
+        return img_t.numpy()
 
     def apply_zoom(img):
         # Small central crop and resize back to original dimensions (1-5% zoom)
         crop_factor = random.uniform(0.92, 0.98)
-        shape = tf.shape(img)
-        h, w = shape[0], shape[1]
-        new_h, new_w = tf.cast(tf.cast(h, tf.float32) * crop_factor, tf.int32), tf.cast(tf.cast(w, tf.float32) * crop_factor, tf.int32)
-        
-        cropped = tf.image.random_crop(img, size=[new_h, new_w, shape[2]])
-        return tf.image.resize(cropped, [h, w])
+        new_h, new_w = int(h * crop_factor), int(w * crop_factor)
+        top = random.randint(0, h - new_h)
+        left = random.randint(0, w - new_w)
+
+        cropped = img[top : top + new_h, left : left + new_w]
+        return cv2.resize(cropped, (w, h), interpolation=cv2.INTER_LINEAR)
 
     def apply_translation(img):
-        # Small spatial shift (up to ~5% max)
-        pad_size = int(8 * intensity)
-        shape = tf.shape(img)
-        padded = tf.image.pad_to_bounding_box(img, pad_size, pad_size, shape[0] + pad_size * 2, shape[1] + pad_size * 2)
-        cropped = tf.image.random_crop(padded, size=shape)
-        return cropped
+        max_shift = max(2, int(12 * intensity))
+        tx = random.randint(-max_shift, max_shift)
+        ty = random.randint(-max_shift, max_shift)
+        M = np.float32([[1, 0, tx], [0, 1, ty]])
+        return cv2.warpAffine(img, M, (w, h), borderMode=cv2.BORDER_REFLECT)
 
     # 3. Randomly select exact transforms up to max_transforms cap
     transform_pool = [apply_rotation, apply_flip, apply_brightness_contrast, apply_zoom, apply_translation]
@@ -142,9 +146,10 @@ def augment_image(img_tensor, class_weight=1.0, label_code=None):
 
     # 4. Sequential execution of selected capped transformations
     for transform_fn in selected_transforms:
-        img_tensor = transform_fn(img_tensor)
+        img_np = transform_fn(img_np)
 
-    return tf.clip_by_value(img_tensor, 0.0, 255.0)
+    img_tensor_out = tf.convert_to_tensor(img_np, dtype=tf.float32)
+    return tf.clip_by_value(img_tensor_out, 0.0, 255.0)
     
 def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16, target_size=(300, 300), augment=False, preprocess_fn=None):
     """
