@@ -10,12 +10,17 @@ def train_model(
     learning_rate=0.0001,
     steps_per_epoch=None,
     validation_steps=None,
-    save_path="models/best_model.h5"
+    save_path=None
 ):
     """
     Compiles the model, configures early stopping and checkpoints, 
     and executes training on the provided datasets/generators.
     """
+    
+    # Default save path to model name if not provided
+    if save_path is None:
+        save_path = f"{model.name}.h5"
+    
     # Ensure saving directory exists
     dir_name = os.path.dirname(save_path)
     if dir_name:
