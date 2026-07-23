@@ -26,7 +26,6 @@ def train_model(
     if dir_name:
         os.makedirs(dir_name, exist_ok=True)
         
-    # Replace sparse_categorical_crossentropy with SparseCategoricalFocalCrossentropy
     loss_fn = tf.keras.losses.SparseCategoricalFocalCrossentropy(
         gamma=2.0,  # Focus factor: higher values force model to focus on hard samples
         from_logits=False,
