@@ -53,7 +53,7 @@ def run_cross_validation(
             val_df,
             test_df=None,
             age_col="age",
-            scaler_save_path=f"models/age_scaler_fold_{fold + 1}.pkl"
+            scaler_save_path=None  # Not saving the scaler for now
         )
         
         metadata_cols = ["age_scaled"]
