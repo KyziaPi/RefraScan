@@ -5,7 +5,8 @@ import numpy as np
 import cv2
 import random
 import tensorflow as tf
-from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+import joblib
+from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.utils import class_weight
 
@@ -20,22 +21,15 @@ def load_and_clean_data(csv_path, img_dir):
     df['full_path'] = df.apply(lambda r: os.path.join(img_dir, create_filename(r)), axis=1)
     return df
 
-def preprocess_metadata(df, numerical_cols, categorical_cols):
+def preprocess_metadata(df, numerical_cols):
     """Encodes and scales tabular clinical features."""
     df = df.copy()
     
     # Scale numerical metadata
     scaler = MinMaxScaler()
     df[numerical_cols] = scaler.fit_transform(df[numerical_cols].fillna(df[numerical_cols].median()))
-    
-    # Encode categorical metadata
-    encoders = {}
-    for col in categorical_cols:
-        le = LabelEncoder()
-        df[col] = le.fit_transform(df[col].astype(str))
-        encoders[col] = le
         
-    return df, scaler, encoders
+    return df, scaler
 
 # For future testing
 def apply_clahe(img):
@@ -274,3 +268,39 @@ def calculate_class_weights(df, target_col):
                                                  classes=classes, 
                                                  y=df[target_col].values)
     return dict(zip(classes, weights))
+
+def scale_age_feature(
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    test_df: pd.DataFrame = None,
+    age_col: str = "age",
+    scaler_save_path: str = "age_scaler.pkl",
+):
+  """Fits MinMaxScaler on train_df[age_col], transforms val_df and test_df,
+
+  and appends an '{age_col}_scaled' column to each.
+  """
+  scaler = MinMaxScaler()
+
+  # Create copies to prevent SettingWithCopy warnings
+  train_df = train_df.copy()
+  val_df = val_df.copy()
+
+  # 1. Fit & transform on training data
+  train_df[f"{age_col}_scaled"] = scaler.fit_transform(train_df[[age_col]])
+
+  # 2. Transform validation data using training bounds
+  val_df[f"{age_col}_scaled"] = scaler.transform(val_df[[age_col]])
+
+  # 3. Transform test data if available
+  if test_df is not None:
+    test_df = test_df.copy()
+    test_df[f"{age_col}_scaled"] = scaler.transform(test_df[[age_col]])
+
+  # 4. Save fitted scaler artifact
+  if scaler_save_path:
+    joblib.dump(scaler, scaler_save_path)
+
+  if test_df is not None:
+    return train_df, val_df, test_df
+  return train_df, val_df
