@@ -213,7 +213,7 @@ def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16,
             row = df_copy.iloc[idx]
 
             # 1. Load image
-            img_path = row["image_path"]
+            img_path = row["full_path"]
             img = cv2.imread(img_path)
             if img is None:
                 continue
