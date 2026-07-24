@@ -51,11 +51,42 @@ def build_densenet121(
     num_classes=3,
     dropout_rate=0.4
 ):
-    """
-    Stub for DenseNet121 multimodal model.
-    To be implemented.
-    """
-    pass
+    # Image Branch
+    image_input = layers.Input(shape=input_image_shape, name="image_input")
+
+    base_model = DenseNet121(
+        include_top=False, 
+        weights='imagenet', 
+        input_tensor=image_input
+    )
+
+    base_model.trainable = False
+
+    x_img = layers.GlobalAveragePooling2D()(base_model.output)
+    x_img = layers.Dense(256, activation='relu')(x_img)
+    x_img = layers.Dropout(dropout_rate)(x_img)
+
+    # Metadata Branch
+    meta_input = layers.Input(shape=(num_metadata_features,), name="meta_input")
+    x_meta = layers.Dense(64, activation='relu')(meta_input)
+    x_meta = layers.Dropout(0.3)(x_meta)
+
+    # Fusion
+    merged = layers.Concatenate()([x_img, x_meta])
+
+    x = layers.Dense(128, activation='relu')(merged)
+    x = layers.Dropout(dropout_rate)(x)
+
+    output = layers.Dense(
+        num_classes,
+        activation='softmax',
+        name="classification_output"
+    )(x)
+
+    return models.Model(
+        inputs=[image_input, meta_input],
+        outputs=output
+    )
 
 def build_model(
     model_name,
