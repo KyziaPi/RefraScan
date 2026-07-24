@@ -30,9 +30,7 @@ def evaluate_model(
 
   # 1. Run prediction with explicit step limit
   y_pred_probs = model.predict(test_ds, steps=steps)
-  class_multipliers = np.array([2.5, 1.0, 1.2])  # [Emmetropia, Myopia, Hyperopia]
-  adjusted_probs = y_pred_probs * class_multipliers
-  y_pred = np.argmax(adjusted_probs, axis=1)
+  y_pred = np.argmax(y_pred_probs, axis=1)
 
   # 2. Extract ground truth labels safely
   if y_true is None:
