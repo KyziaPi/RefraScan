@@ -124,7 +124,9 @@ def run_cross_validation(
         )
         
         # Calculate steps per epoch based on dataset lengths and batch size
-        steps_per_epoch = math.ceil(len(train_df) / batch_size)
+        majority_class_count = train_df["classification_encoded"].value_counts().max()
+        effective_train_size = majority_class_count * 3
+        steps_per_epoch = int(np.ceil(effective_train_size / batch_size))
         validation_steps = math.ceil(len(val_df) / batch_size)
         test_steps = math.ceil(len(current_test_df) / batch_size)
 

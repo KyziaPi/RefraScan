@@ -52,7 +52,7 @@ def train_model(
     if dir_name:
         os.makedirs(dir_name, exist_ok=True)
         
-    loss_fn = SparseCategoricalFocalLoss(gamma=2.0)
+    loss_fn = SparseCategoricalFocalLoss(gamma=0.5)
 
     # 1. Compile model
     optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
@@ -66,7 +66,7 @@ def train_model(
     callbacks = [
         EarlyStopping(
             monitor='val_loss',
-            patience=7,
+            patience=10,
             restore_best_weights=True,
             verbose=1
         ),
