@@ -52,15 +52,32 @@ def load_and_preprocess_image(img_path, target_size=(300, 300)):
             
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
+        # Calculate padding dimensions
+        h, w = img.shape[:2]
+        th, tw = target_size
+        scale = min(tw / w, th / h)
+        nw, nh = int(w * scale), int(h * scale)
+        
+        # Resize image keeping aspect ratio
+        resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
+
+        # Create canvas and center the image
+        padded = np.zeros((th, tw, 3), dtype=np.uint8)
+        top = (th - nh) // 2
+        left = (tw - nw) // 2
+        padded[top : top + nh, left : left + nw] = resized
+        
+        return padded
+        
         # 1. Apply CLAHE contrast enhancement on all images
         #img = apply_clahe(img)
         
         # 2. Resize image
-        img_tensor = tf.convert_to_tensor(img, dtype=tf.float32)
-        padded_tensor = tf.image.resize_with_pad(img_tensor, target_size[0], target_size[1])
-        img = padded_tensor.numpy().astype(np.uint8)
+        #img_tensor = tf.convert_to_tensor(img, dtype=tf.float32)
+        #padded_tensor = tf.image.resize_with_pad(img_tensor, target_size[0], target_size[1])
+        #img = padded_tensor.numpy().astype(np.uint8)
             
-        return img
+        #return img
     except Exception as e:
         return np.zeros((target_size[0], target_size[1], 3), dtype=np.uint8)
     
