@@ -6,7 +6,7 @@ import cv2
 import random
 import tensorflow as tf
 import joblib
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.utils import class_weight
 
@@ -21,15 +21,22 @@ def load_and_clean_data(csv_path, img_dir):
     df['full_path'] = df.apply(lambda r: os.path.join(img_dir, create_filename(r)), axis=1)
     return df
 
-def preprocess_metadata(df, numerical_cols):
+def preprocess_metadata(df, numerical_cols, categorical_cols):
     """Encodes and scales tabular clinical features."""
     df = df.copy()
     
     # Scale numerical metadata
     scaler = MinMaxScaler()
     df[numerical_cols] = scaler.fit_transform(df[numerical_cols].fillna(df[numerical_cols].median()))
+    
+    # Encode categorical metadata
+    encoders = {}
+    for col in categorical_cols:
+        le = LabelEncoder()
+        df[col] = le.fit_transform(df[col].astype(str))
+        encoders[col] = le
         
-    return df, scaler
+    return df, scaler, encoders
 
 # For future testing
 def apply_clahe(img):
