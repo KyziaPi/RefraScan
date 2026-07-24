@@ -152,26 +152,24 @@ def augment_image(img, class_weight=1.0, label_code=None):
 def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16, target_size=(300, 300), augment=False, preprocess_fn=None):
     """
     Generator yielding multi-modal inputs: (images, metadata) and targets.
-    Handles numeric columns (e.g., 'age')
+    Handles arbitrary numeric & categorical metadata columns via One-Hot Encoding.
     """
     df_copy = df.copy().reset_index(drop=True)
     
     # Pre-process metadata columns: handle categorical string variables via One-Hot Encoding
     processed_meta = []
     for col in metadata_cols:
-        if df[col].dtype == 'object' or isinstance(df[col].dtype, pd.CategoricalDtype):
+        if df_copy[col].dtype == 'object' or isinstance(df_copy[col].dtype, pd.CategoricalDtype):
             # One-hot encode string/categorical columns (e.g., data_origin)
-            dummies = pd.get_dummies(df[col], prefix=col, drop_first=False)
+            dummies = pd.get_dummies(df_copy[col], prefix=col, drop_first=False)
             processed_meta.append(dummies)
         else:
             # Numeric columns (e.g., age)
-            processed_meta.append(df[[col]])
+            processed_meta.append(df_copy[[col]])
             
     # Concatenate processed metadata into a single DataFrame and convert safely to float32
     metadata_df = pd.concat(processed_meta, axis=1)
     metadata_matrix = metadata_df.values.astype(np.float32)
-
-    num_samples = len(df)
     
     # Group indices by class for balanced sampling
     class_indices = {
@@ -233,8 +231,7 @@ def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16,
             images.append(img)
 
             # 4. Extract metadata
-            meta_feat = row[metadata_cols].values.astype(np.float32)
-            metadata.append(meta_feat)
+            metadata.append(metadata_matrix[idx])
 
             if label is not None:
                 targets.append(label)
