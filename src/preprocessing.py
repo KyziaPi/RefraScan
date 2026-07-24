@@ -149,7 +149,7 @@ def augment_image(img, class_weight=1.0, label_code=None):
 
     return np.clip(img_np, 0.0, 255.0).astype(np.float32)
     
-def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16, target_size=(300, 300), augment=False, preprocess_fn=None):
+def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16, target_size=(300, 300), augment=False, preprocess_fn=None, image_loader=None):
     """
     Generator yielding multi-modal inputs: (images, metadata) and targets.
     Handles arbitrary numeric & categorical metadata columns via One-Hot Encoding.
@@ -176,6 +176,11 @@ def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16,
         c: df_copy[df_copy["classification_encoded"] == c].index.tolist()
         for c in df_copy["classification_encoded"].unique()
     }
+    
+    # Fallback to load_and_preprocess_image if no custom loader is passed
+    loader_fn = (
+        image_loader if image_loader is not None else load_and_preprocess_image
+    )
 
     while True:
         images = []
@@ -212,11 +217,7 @@ def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16,
 
             # 1. Load image
             img_path = row["full_path"]
-            img = cv2.imread(img_path)
-            if img is None:
-                continue
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            img = cv2.resize(img, (300, 300))
+            img = loader_fn(img_path, target_size=target_size)
 
             # 2. Extract label & apply balanced augmentation
             label = row.get("classification_encoded", None)

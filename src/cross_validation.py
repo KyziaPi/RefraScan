@@ -6,6 +6,7 @@ from sklearn.model_selection import StratifiedGroupKFold, train_test_split
 from src.preprocessing import (
     calculate_class_weights,
     create_multimodal_generator,
+    load_and_preprocess_image,
     scale_age_feature,
 )
 from src.models import build_model
@@ -104,7 +105,8 @@ def run_cross_validation(
             class_weights,
             batch_size=batch_size, 
             augment=True, 
-            preprocess_fn=preprocess_input
+            preprocess_fn=preprocess_input,
+            image_loader=load_and_preprocess_image
         )
         val_gen = create_multimodal_generator(
             val_df, 
@@ -112,7 +114,8 @@ def run_cross_validation(
             class_weights=None,
             batch_size=batch_size, 
             augment=False, 
-            preprocess_fn=preprocess_input
+            preprocess_fn=preprocess_input,
+            image_loader=load_and_preprocess_image
         )
         test_gen = create_multimodal_generator(
             current_test_df,
@@ -121,6 +124,7 @@ def run_cross_validation(
             batch_size=batch_size,
             augment=False,
             preprocess_fn=preprocess_input,
+            image_loader=load_and_preprocess_image
         )
         
         # Calculate steps per epoch based on dataset lengths and batch size
