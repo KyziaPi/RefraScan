@@ -52,7 +52,7 @@ def run_cross_validation(
     n_splits: int = 10,
     batch_size: int = 16,
     epochs: int = 30,
-    learning_rate: float = 3e-5,
+    learning_rate: float = 0.0001,
     holdout_test_size: float = 0.15,
 ):
     """Executes 10-Fold CV with an isolated Holdout Test Set."""
