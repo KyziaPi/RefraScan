@@ -6,7 +6,7 @@ import cv2
 import random
 import tensorflow as tf
 import joblib
-from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.utils import class_weight
 
@@ -21,22 +21,15 @@ def load_and_clean_data(csv_path, img_dir):
     df['full_path'] = df.apply(lambda r: os.path.join(img_dir, create_filename(r)), axis=1)
     return df
 
-def preprocess_metadata(df, numerical_cols, categorical_cols):
+def preprocess_metadata(df, numerical_cols):
     """Encodes and scales tabular clinical features."""
     df = df.copy()
     
     # Scale numerical metadata
     scaler = MinMaxScaler()
     df[numerical_cols] = scaler.fit_transform(df[numerical_cols].fillna(df[numerical_cols].median()))
-    
-    # Encode categorical metadata
-    encoders = {}
-    for col in categorical_cols:
-        le = LabelEncoder()
-        df[col] = le.fit_transform(df[col].astype(str))
-        encoders[col] = le
         
-    return df, scaler, encoders
+    return df, scaler
 
 # For future testing
 def apply_clahe(img):
@@ -97,20 +90,16 @@ def augment_image(img, class_weight=1.0, label_code=None):
     elif label_code == 2:     # Hyperopia
         max_transforms = random.choice([0, 1, 2])
     elif label_code == 0:     # Emmetropia
-        max_transforms = random.choice([2, 3, 4])
+        max_transforms = random.choice([1, 2, 3])
     else:                     # Default fallback
         max_transforms = 1
 
     if max_transforms == 0:
         return np.clip(img_np, 0.0, 255.0).astype(np.float32)
 
-    # 2. Intensity Factor: Allow higher intensity cap specifically for Emmetropia
-    if label_code == 0:
-        # Scale higher for Emmetropia (clamped between 1.0 and 2.0)
-        intensity = max(1.0, min(float(class_weight), 2.0))
-    else:
-        intensity = max(0.5, min(float(class_weight), 1.5))
-
+    # 2. Define pool of mild transformation functions
+    # Intensity factor scales linearly with class_weight (clamped between 0.5 and 1.5)
+    intensity = max(0.5, min(float(class_weight), 1.5))
     h, w = img_np.shape[:2]
 
     def apply_rotation(img_arr):
@@ -149,14 +138,9 @@ def augment_image(img, class_weight=1.0, label_code=None):
         ty = random.randint(-max_shift, max_shift)
         M = np.float32([[1, 0, tx], [0, 1, ty]])
         return cv2.warpAffine(img_arr, M, (w, h), borderMode=cv2.BORDER_REFLECT)
-    
-    def apply_shear(img_arr):
-        shear_val = random.uniform(-0.08, 0.08) * intensity
-        M = np.float32([[1, shear_val, 0], [0, 1, 0]])
-        return cv2.warpAffine(img_arr, M, (w, h), borderMode=cv2.BORDER_REFLECT)
 
     # 3. Randomly select exact transforms up to max_transforms cap
-    transform_pool = [apply_rotation, apply_flip, apply_brightness_contrast, apply_zoom, apply_translation, apply_shear]
+    transform_pool = [apply_rotation, apply_flip, apply_brightness_contrast, apply_zoom, apply_translation]
     selected_transforms = random.sample(transform_pool, min(max_transforms, len(transform_pool)))
 
     # 4. Sequential execution of selected capped transformations
