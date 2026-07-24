@@ -75,7 +75,7 @@ def evaluate_model(
   print("\n--- Raw Probabilities: ACTUAL Emmetropia Images ---")
   print(
       f"{'True Label':<12} | {'Emmetropia':<12} | {'Myopia':<12} |"
-      " {'Hyperopia':<12}"
+      f"{'Hyperopia':<12}"
   )
   print("-" * 55)
 

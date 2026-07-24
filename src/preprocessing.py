@@ -90,16 +90,20 @@ def augment_image(img, class_weight=1.0, label_code=None):
     elif label_code == 2:     # Hyperopia
         max_transforms = random.choice([0, 1, 2])
     elif label_code == 0:     # Emmetropia
-        max_transforms = random.choice([1, 2, 3])
+        max_transforms = random.choice([2, 3, 4])
     else:                     # Default fallback
         max_transforms = 1
 
     if max_transforms == 0:
         return np.clip(img_np, 0.0, 255.0).astype(np.float32)
 
-    # 2. Define pool of mild transformation functions
-    # Intensity factor scales linearly with class_weight (clamped between 0.5 and 1.5)
-    intensity = max(0.5, min(float(class_weight), 1.5))
+    # 2. Intensity Factor: Allow higher intensity cap specifically for Emmetropia
+    if label_code == 0:
+        # Scale higher for Emmetropia (clamped between 1.0 and 2.0)
+        intensity = max(1.0, min(float(class_weight), 2.0))
+    else:
+        intensity = max(0.5, min(float(class_weight), 1.5))
+
     h, w = img_np.shape[:2]
 
     def apply_rotation(img_arr):
@@ -138,9 +142,14 @@ def augment_image(img, class_weight=1.0, label_code=None):
         ty = random.randint(-max_shift, max_shift)
         M = np.float32([[1, 0, tx], [0, 1, ty]])
         return cv2.warpAffine(img_arr, M, (w, h), borderMode=cv2.BORDER_REFLECT)
+    
+    def apply_shear(img_arr):
+        shear_val = random.uniform(-0.08, 0.08) * intensity
+        M = np.float32([[1, shear_val, 0], [0, 1, 0]])
+        return cv2.warpAffine(img_arr, M, (w, h), borderMode=cv2.BORDER_REFLECT)
 
     # 3. Randomly select exact transforms up to max_transforms cap
-    transform_pool = [apply_rotation, apply_flip, apply_brightness_contrast, apply_zoom, apply_translation]
+    transform_pool = [apply_rotation, apply_flip, apply_brightness_contrast, apply_zoom, apply_translation, apply_shear]
     selected_transforms = random.sample(transform_pool, min(max_transforms, len(transform_pool)))
 
     # 4. Sequential execution of selected capped transformations
