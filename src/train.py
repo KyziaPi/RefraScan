@@ -5,9 +5,16 @@ from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 class SparseCategoricalFocalLoss(tf.keras.losses.Loss):
   """Custom Focal Loss that accepts sparse integer targets (0, 1, 2)."""
 
-  def __init__(self, gamma=2.0, name="sparse_categorical_focal_loss"):
+  def __init__(self, gamma=2.0, class_weight=None, name="sparse_categorical_focal_loss"):
     super().__init__(name=name)
     self.gamma = gamma
+    
+    if class_weight is not None:
+      # Convert class_weight dict {0: w0, 1: w1, 2: w2} to Tensor [w0, w1, w2]
+      weights = [class_weight[i] for i in sorted(class_weight.keys())]
+      self.class_weight = tf.constant(weights, dtype=tf.float32)
+    else:
+      self.class_weight = None
 
   def call(self, y_true, y_pred):
     y_true = tf.cast(y_true, tf.int32)
@@ -26,6 +33,11 @@ class SparseCategoricalFocalLoss(tf.keras.losses.Loss):
     # Calculate Focal Loss: - (1 - p_t)^gamma * log(p_t)
     focal_loss = -tf.pow(1.0 - p_t, self.gamma) * tf.math.log(p_t)
 
+    # Apply class weights (alpha_t) directly to the loss tensor
+    if self.class_weight is not None:
+      alpha_t = tf.gather(self.class_weight, y_true)
+      focal_loss = focal_loss * alpha_t
+
     return tf.reduce_mean(focal_loss)
 
 def train_model(
@@ -37,7 +49,7 @@ def train_model(
     steps_per_epoch=None,
     validation_steps=None,
     save_path=None,
-    class_weights=None,
+    class_weight=None
 ):
     """
     Compiles the model, configures early stopping and checkpoints, 
@@ -52,10 +64,11 @@ def train_model(
     dir_name = os.path.dirname(save_path)
     if dir_name:
         os.makedirs(dir_name, exist_ok=True)
-        
-    loss_fn = SparseCategoricalFocalLoss(gamma=2)
+    
+    # 1. Instantiate Focal Loss with class_weight injected directly
+    loss_fn = SparseCategoricalFocalLoss(gamma=2.0, class_weight=class_weight)
 
-    # 1. Compile model
+    # 2. Compile model
     optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
     model.compile(
         optimizer=optimizer,
@@ -63,7 +76,7 @@ def train_model(
         metrics=['accuracy']
     )
 
-    # 2. Callbacks
+    # 3. Callbacks
     callbacks = [
         EarlyStopping(
             monitor='val_loss',
@@ -79,7 +92,7 @@ def train_model(
         )
     ]
 
-    # 3. Fit model & Save best weights (handled via ModelCheckpoint)
+    # 4. Fit model & Save best weights (handled via ModelCheckpoint)
     history = model.fit(
         train_ds,
         steps_per_epoch=steps_per_epoch,
@@ -87,7 +100,6 @@ def train_model(
         validation_steps=validation_steps,
         epochs=epochs,
         callbacks=callbacks,
-        class_weight=class_weights
     )
 
     return history
