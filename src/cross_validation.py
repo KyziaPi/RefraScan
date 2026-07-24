@@ -151,7 +151,8 @@ def run_cross_validation(
             learning_rate=learning_rate,
             steps_per_epoch=steps_per_epoch,
             validation_steps=validation_steps,
-            save_path=fold_model_path
+            save_path=fold_model_path,
+            class_weights=class_weights
         )
 
         # 7. Evaluate the best model on the fold's validation set

@@ -36,7 +36,8 @@ def train_model(
     learning_rate=0.0001,
     steps_per_epoch=None,
     validation_steps=None,
-    save_path=None
+    save_path=None,
+    class_weights=None,
 ):
     """
     Compiles the model, configures early stopping and checkpoints, 
@@ -85,7 +86,8 @@ def train_model(
         validation_data=val_ds,
         validation_steps=validation_steps,
         epochs=epochs,
-        callbacks=callbacks
+        callbacks=callbacks,
+        class_weights=class_weights
     )
 
     return history
