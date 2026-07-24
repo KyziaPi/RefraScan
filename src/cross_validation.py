@@ -51,7 +51,7 @@ def run_cross_validation(
     n_splits: int = 10,
     batch_size: int = 16,
     epochs: int = 30,
-    learning_rate: float = 0.0001,
+    learning_rate: float = 3e-5,
     holdout_test_size: float = 0.15,
 ):
     """Executes 10-Fold CV with an isolated Holdout Test Set."""
@@ -70,9 +70,9 @@ def run_cross_validation(
     val_metrics = {"accuracy": [], "precision": [], "recall": [], "f1": []}
     test_metrics = {"accuracy": [], "precision": [], "recall": [], "f1": []}
 
-    print(f"\n{'='*55}")
+    print(f"\n{'='*65}")
     print(f"STARTING {n_splits}-FOLD CROSS VALIDATION")
-    print(f"{'='*55}\n")
+    print(f"{'='*65}\n")
 
     for fold, (train_idx, val_idx) in enumerate(
         sgkf.split(cv_df, y=cv_df[target_col], groups=cv_df[patient_col])
@@ -179,30 +179,55 @@ def run_cross_validation(
         for m in ["accuracy", "precision", "recall", "f1"]:
             val_metrics[m].append(v_res.get(m, 0))
             test_metrics[m].append(t_res.get(m, 0))
+            
+        # Build DataFrames for per-fold breakdown tables
+        fold_names = [f"Fold {i+1}" for i in range(n_splits)]
 
-    # 9. Calculate and display final average metrics
-    print(f"\n{'='*50}")
-    print(f"CROSS VALIDATION RESULTS ({n_splits} Folds)")
-    print(f"{'='*50}")
-    
-    print(f"\n{'=' * 55}")
-    print(
-        f"FINAL CROSS-VALIDATION SUMMARY ({n_splits} Folds + Holdout Test Set)"
-    )
-    print(f"{'=' * 55}")
+        val_summary_df = pd.DataFrame({
+            "Fold": fold_names,
+            "Accuracy": val_metrics["accuracy"],
+            "Precision": val_metrics["precision"],
+            "Recall": val_metrics["recall"],
+            "F1 Score": val_metrics["f1"],
+        })
+
+        test_summary_df = pd.DataFrame({
+            "Fold": fold_names,
+            "Accuracy": test_metrics["accuracy"],
+            "Precision": test_metrics["precision"],
+            "Recall": test_metrics["recall"],
+            "F1 Score": test_metrics["f1"],
+        })
+
+    # 10. Calculate and display final average metrics
+    print("\n" + "=" * 65)
+    print(f"    FINAL CROSS-VALIDATION SUMMARY ({n_splits}-FOLD AVERAGE)")
+    print("=" * 65)
 
     print("\n--- Validation Performance (Averaged across Folds) ---")
     for m in ["accuracy", "precision", "recall", "f1"]:
-        print(
-            f"Mean Val {m.capitalize():<10}: {np.mean(val_metrics[m]):.4f} ±"
-            f" {np.std(val_metrics[m]):.4f}"
-        )
+        mean_val = np.mean(val_metrics[m])
+        std_val = np.std(val_metrics[m])
+        print(f"{m.capitalize():<12}: {mean_val:.4f} ± {std_val:.4f}")
+
+    print("\n--- Per-Fold Validation Breakdown ---")
+    print(val_summary_df.to_string(index=False))
+
+    print("\n" + "-" * 65)
 
     print("\n--- Holdout Test Performance (Averaged across Fold Models) ---")
     for m in ["accuracy", "precision", "recall", "f1"]:
-        print(
-            f"Mean Test {m.capitalize():<9}: {np.mean(test_metrics[m]):.4f} ±"
-            f" {np.std(test_metrics[m]):.4f}"
-        )
+        mean_test = np.mean(test_metrics[m])
+        std_test = np.std(test_metrics[m])
+        print(f"{m.capitalize():<12}: {mean_test:.4f} ± {std_test:.4f}")
 
-    return {"val_metrics": val_metrics, "test_metrics": test_metrics}
+    print("\n--- Per-Fold Holdout Test Breakdown ---")
+    print(test_summary_df.to_string(index=False))
+    print("=" * 65)
+
+    return {
+        "val_metrics": val_metrics,
+        "test_metrics": test_metrics,
+        "val_summary_df": val_summary_df,
+        "test_summary_df": test_summary_df,
+    }
