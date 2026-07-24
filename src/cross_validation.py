@@ -181,7 +181,8 @@ def run_cross_validation(
             test_metrics[m].append(t_res.get(m, 0))
             
         # Build DataFrames for per-fold breakdown tables
-        fold_names = [f"Fold {i+1}" for i in range(n_splits)]
+        num_completed_folds = len(val_metrics["accuracy"])
+        fold_names = [f"Fold {i+1}" for i in range(num_completed_folds)]
 
         val_summary_df = pd.DataFrame({
             "Fold": fold_names,
@@ -201,7 +202,7 @@ def run_cross_validation(
 
     # 10. Calculate and display final average metrics
     print("\n" + "=" * 65)
-    print(f"    FINAL CROSS-VALIDATION SUMMARY ({n_splits}-FOLD AVERAGE)")
+    print(f"    FINAL CROSS-VALIDATION SUMMARY ({num_completed_folds}-FOLD AVERAGE)")
     print("=" * 65)
 
     print("\n--- Validation Performance (Averaged across Folds) ---")
