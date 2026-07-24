@@ -87,7 +87,7 @@ def train_model(
         validation_steps=validation_steps,
         epochs=epochs,
         callbacks=callbacks,
-        class_weights=class_weights
+        class_weight=class_weights
     )
 
     return history
