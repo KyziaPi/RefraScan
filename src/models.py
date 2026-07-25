@@ -1,6 +1,6 @@
 import tensorflow as tf
 from tensorflow.keras import layers, models
-from tensorflow.keras.applications import EfficientNetB3, ResNet50
+from tensorflow.keras.applications import EfficientNetB3, ResNet50, DenseNet121
 
 def build_efficientnet(
     input_image_shape=(300, 300, 3), 
