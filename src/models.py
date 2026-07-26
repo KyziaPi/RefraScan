@@ -1,6 +1,6 @@
 import tensorflow as tf
 from tensorflow.keras import layers, models
-from tensorflow.keras.applications import EfficientNetB3
+from tensorflow.keras.applications import EfficientNetB3, ResNet50, DenseNet121
 
 def build_efficientnet(
     input_image_shape=(300, 300, 3), 
@@ -38,12 +38,28 @@ def build_resnet50(
     num_classes=3,
     dropout_rate=0.4
 ):
-    """
-    Stub for ResNet50 multimodal model.
-    To be implemented.
-    """
-    pass
+    # Image Branch
+    image_input = layers.Input(shape=input_image_shape, name="image_input")
+    base_model = ResNet50(include_top=False, weights='imagenet', input_tensor=image_input)
+    base_model.trainable = False
 
+    x_img = layers.GlobalAveragePooling2D()(base_model.output)
+    x_img = layers.Dense(256, activation='relu')(x_img)
+    x_img = layers.Dropout(dropout_rate)(x_img)
+
+    # Metadata Branch
+    meta_input = layers.Input(shape=(num_metadata_features,), name="meta_input")
+    x_meta = layers.Dense(64, activation='relu')(meta_input)
+    x_meta = layers.Dropout(0.3)(x_meta)
+
+    # Fusion
+    merged = layers.Concatenate()([x_img, x_meta])
+    x = layers.Dense(128, activation='relu')(merged)
+    x = layers.Dropout(dropout_rate)(x)
+
+    output = layers.Dense(num_classes, activation='softmax', name="classification_output")(x)
+
+    return models.Model(inputs=[image_input, meta_input], outputs=output)
 
 def build_densenet121(
     input_image_shape=(224, 224, 3), 
