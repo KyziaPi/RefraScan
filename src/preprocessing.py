@@ -162,7 +162,7 @@ def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16,
     Handles arbitrary numeric & categorical metadata columns via One-Hot Encoding.
     """
     df_copy = df.copy().reset_index(drop=True)
-    
+    eval_cursor = 0  #updated: tracks position for deterministic val/test sampling
     # Pre-process metadata columns: handle categorical string variables via One-Hot Encoding
     processed_meta = []
     for col in metadata_cols:
@@ -214,10 +214,12 @@ def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16,
 
             np.random.shuffle(selected_indices)
         else:
-            # --- VAL / TEST MODE: Sequential / Standard Sampling ---
-            selected_indices = np.random.choice(
-                df_copy.index, size=batch_size, replace=False
-            )
+            #updated: --- VAL / TEST MODE: Sequential, deterministic sampling (matches df row order) ---
+            n = len(df_copy)
+            start = eval_cursor
+            end = min(start + batch_size, n)
+            selected_indices = df_copy.index[start:end].tolist()
+            eval_cursor = end if end < n else 0
 
         for idx in selected_indices:
             row = df_copy.iloc[idx]
