@@ -47,33 +47,32 @@ class SparseCategoricalFocalLoss(tf.keras.losses.Loss):
 ###########################################################
 
 def unfreeze_model(model, model_name):
+    """
+    Selectively unfreezes the last block(s) of the backbone for fine-tuning.
+
+    Note: each build_* function constructs its backbone with
+    `input_tensor=image_input`, so the backbone's internal layers (e.g.
+    DenseNet121's conv/bn/relu layers) are flattened directly into the outer
+    functional model's `model.layers` list rather than appearing as a single
+    nested tf.keras.Model instance. So we operate on `model.layers` directly
+    instead of searching for a nested backbone sub-model. The backbone layers
+    are already frozen from Stage 1 (build_model set base_model.trainable =
+    False), and the custom head layers are already trainable — we only need
+    to selectively re-enable training on the last backbone block.
+    """
 
     print(f"\nFine-tuning {model_name}")
-
-    backbone = None
-
-    for layer in model.layers:
-        if isinstance(layer, tf.keras.Model):
-            backbone = layer
-            break
-
-    if backbone is None:
-        raise ValueError("Backbone model not found.")
-
-    #freeze everything first
-    for layer in backbone.layers:
-        layer.trainable = False
 
     if model_name.lower() == "densenet121":
 
         for layer in model.layers:
 
-            # freeze BatchNorm layers
+            # keep BatchNorm layers frozen even inside the unfrozen block
             if isinstance(layer, tf.keras.layers.BatchNormalization):
-                layer.trainable = False
+                continue
 
             # unfreeze the entire last Dense Block
-            elif (
+            if (
                 layer.name.startswith("conv5")
                 or layer.name.startswith("pool5")
                 or layer.name.startswith("relu")
@@ -82,33 +81,30 @@ def unfreeze_model(model, model_name):
 
     elif model_name.lower() == "efficientnet":
 
-       # unfreeze approximately the last 30% of layers for fine-tuning
-        total_layers = len(backbone.layers)
+        # unfreeze approximately the last 30% of layers for fine-tuning
+        total_layers = len(model.layers)
 
-        for layer in backbone.layers[int(total_layers * 0.7):]:
+        for layer in model.layers[int(total_layers * 0.7):]:
             if not isinstance(layer, tf.keras.layers.BatchNormalization):
                 layer.trainable = True
 
-
     elif model_name.lower() == "resnet50":
 
-        for layer in backbone.layers:
+        for layer in model.layers:
 
-            # freeze BatchNorm layers
+            # keep BatchNorm layers frozen even inside the unfrozen block
             if isinstance(layer, tf.keras.layers.BatchNormalization):
-                layer.trainable = False
+                continue
 
             # unfreeze the entire last Conv Block
-            elif layer.name.startswith("conv5"):
+            if layer.name.startswith("conv5"):
                 layer.trainable = True
 
-    trainable_count = sum(layer.trainable for layer in backbone.layers)
-                
-    print(f"Trainable layers: {trainable}")
+    trainable_count = sum(layer.trainable for layer in model.layers)
+
+    print(f"Trainable layers: {trainable_count}")
 
     print("\n========== TRAINABLE LAYERS ==========")
-
-    count = 0
 
     for layer in model.layers:
         if layer.trainable:
@@ -117,7 +113,6 @@ def unfreeze_model(model, model_name):
     print("======================================\n")
 
     return model
-    
 
 
 ###########################################################
