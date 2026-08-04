@@ -93,7 +93,7 @@ def run_cross_validation(
             val_df=val_df,
             test_df=holdout_test_df.copy(),
             age_col="age",
-            scaler_save_path=f"scaler_fold_{fold + 1}.pkl"
+            scaler_save_path=f"scaler_fold_{fold + 1}.joblib"
         )
         
         metadata_cols = ["age_scaled"]

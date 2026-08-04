@@ -269,7 +269,7 @@ def scale_age_feature(
     val_df: pd.DataFrame,
     test_df: pd.DataFrame = None,
     age_col: str = "age",
-    scaler_save_path: str = "age_scaler.pkl",
+    scaler_save_path: str = "age_scaler.joblib",
 ):
   """Fits MinMaxScaler on train_df[age_col], transforms val_df and test_df,
 
