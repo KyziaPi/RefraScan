@@ -40,6 +40,18 @@ class SparseCategoricalFocalLoss(tf.keras.losses.Loss):
 
     return tf.reduce_mean(focal_loss)
 
+ #updated: added unfreeze_resnet_stage function to selectively unfreeze ResNet50 layers while keeping BatchNorm frozen 
+def unfreeze_resnet_stage(model, stage_prefixes=("conv5_block3",)):
+    """Unfreezes ResNet50 layers matching the given stage prefix, keeping BatchNorm frozen."""
+    unfrozen = []
+    for layer in model.layers:
+        if layer.name.startswith(stage_prefixes):
+            if not isinstance(layer, tf.keras.layers.BatchNormalization):
+                layer.trainable = True
+                unfrozen.append(layer.name)
+    print(f"Unfroze {len(unfrozen)} layers: {unfrozen}")
+    return model
+
 def train_model(
     model,
     train_ds,
@@ -49,7 +61,8 @@ def train_model(
     steps_per_epoch=None,
     validation_steps=None,
     save_path=None,
-    class_weight=None
+    class_weight=None,
+    patience=7 #updated: added patience parameter for early stopping
 ):
     """
     Compiles the model, configures early stopping and checkpoints, 
@@ -80,7 +93,7 @@ def train_model(
     callbacks = [
         EarlyStopping(
             monitor='val_loss',
-            patience=7,
+            patience=patience, #updated: added patience parameter for early stopping
             restore_best_weights=True,
             verbose=1
         ),

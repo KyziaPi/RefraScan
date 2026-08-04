@@ -10,7 +10,7 @@ from src.preprocessing import (
     scale_age_feature,
 )
 from src.models import build_model
-from src.train import train_model
+from src.train import train_model, unfreeze_resnet_stage #updated: import unfreeze_resnet_stage for selective unfreezing of ResNet50 layers
 from src.evaluate import evaluate_model
 
 def split_holdout_test(
@@ -54,6 +54,9 @@ def run_cross_validation(
     epochs: int = 30,
     learning_rate: float = 0.0001,
     holdout_test_size: float = 0.15,
+    fine_tune: bool = False, #updated: added fine-tune option for selective unfreezing of ResNet50 layers
+    fine_tune_epochs: int = 15, #updated
+    fine_tune_lr: float = 1e-5, #updated
 ):
     """Executes 10-Fold CV with an isolated Holdout Test Set."""
     
@@ -159,8 +162,27 @@ def run_cross_validation(
             class_weight=class_weights
         )
 
-        # 7. Evaluate the best model on the fold's validation set
         model.load_weights(fold_model_path)
+
+        #updated: 6b. Optional fine-tuning phase
+        if fine_tune:
+            unfreeze_resnet_stage(model, stage_prefixes=("conv5_block3",))
+            fine_tune_path = f"finetuned_{model_name}_fold_{fold + 1}.h5"
+            train_model(
+                model=model,
+                train_ds=train_gen,
+                val_ds=val_gen,
+                epochs=fine_tune_epochs,
+                learning_rate=fine_tune_lr,
+                steps_per_epoch=steps_per_epoch,
+                validation_steps=validation_steps,
+                save_path=fine_tune_path,
+                class_weight=class_weights,
+                patience=4
+            )
+            fold_model_path = fine_tune_path
+
+        # 7. Evaluate the best model on the fold's validation set
         print("\n[Validation Set Evaluation]")
         v_res = evaluate_model(
             model=model,

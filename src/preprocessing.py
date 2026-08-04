@@ -21,16 +21,6 @@ def load_and_clean_data(csv_path, img_dir):
     df['full_path'] = df.apply(lambda r: os.path.join(img_dir, create_filename(r)), axis=1)
     return df
 
-def preprocess_metadata(df, numerical_cols):
-    """Encodes and scales tabular clinical features."""
-    df = df.copy()
-    
-    # Scale numerical metadata
-    scaler = MinMaxScaler()
-    df[numerical_cols] = scaler.fit_transform(df[numerical_cols].fillna(df[numerical_cols].median()))
-        
-    return df, scaler
-
 # For future testing
 def apply_clahe(img):
     """Applies CLAHE enhancement in LAB color space to boost retinal contrast."""
@@ -172,7 +162,7 @@ def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16,
     Handles arbitrary numeric & categorical metadata columns via One-Hot Encoding.
     """
     df_copy = df.copy().reset_index(drop=True)
-    
+    eval_cursor = 0  #updated: tracks position for deterministic val/test sampling
     # Pre-process metadata columns: handle categorical string variables via One-Hot Encoding
     processed_meta = []
     for col in metadata_cols:
@@ -224,10 +214,12 @@ def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16,
 
             np.random.shuffle(selected_indices)
         else:
-            # --- VAL / TEST MODE: Sequential / Standard Sampling ---
-            selected_indices = np.random.choice(
-                df_copy.index, size=batch_size, replace=False
-            )
+            #updated: --- VAL / TEST MODE: Sequential, deterministic sampling (matches df row order) ---
+            n = len(df_copy)
+            start = eval_cursor
+            end = min(start + batch_size, n)
+            selected_indices = df_copy.index[start:end].tolist()
+            eval_cursor = end if end < n else 0
 
         for idx in selected_indices:
             row = df_copy.iloc[idx]
@@ -263,53 +255,6 @@ def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16,
             yield (batch_images, batch_meta), batch_targets
         else:
             yield (batch_images, batch_meta)
-
-def split_data_by_patient(df, patient_col='ID', target_col='classification_encoded', test_size=0.30, val_ratio=0.50, random_state=42):
-    """
-    Splits a DataFrame by patient ID using stratified sampling to prevent data leakage 
-    across bilateral eye samples while maintaining class balance.
-
-    Parameters:
-      df (pd.DataFrame): The input DataFrame.
-      patient_col (str): Column name containing patient IDs.
-      target_col (str): Column name containing target classification labels.
-      test_size (float): Fraction of patients for temp split (Val + Test). Default 0.30 (70% Train).
-      val_ratio (float): Fraction of temp split assigned to Val vs Test. Default 0.50 (15% Val, 15% Test).
-      random_state (int): Seed for reproducibility.
-
-    Returns:
-      train_df, val_df, test_df (tuple of pd.DataFrame): DataFrames for train, val, and test splits.
-    """
-    df = df.copy()
-
-    # Get primary classification label per unique patient ID for stratification
-    patient_classes = df.groupby(patient_col)[target_col].first()
-    unique_ids = patient_classes.index.values
-    unique_labels = patient_classes.values
-
-    # 1. First split: Train vs Temp (Val + Test)
-    train_ids, temp_ids, _, temp_labels = train_test_split(
-        unique_ids,
-        unique_labels,
-        test_size=test_size,
-        stratify=unique_labels,
-        random_state=random_state
-    )
-
-    # 2. Second split: Temp into Val and Test
-    val_ids, test_ids = train_test_split(
-        temp_ids,
-        test_size=val_ratio,
-        stratify=temp_labels,
-        random_state=random_state
-    )
-
-    # 3. Filter full dataset by patient IDs to preserve all eye images without leakage
-    train_df = df[df[patient_col].isin(train_ids)].copy().reset_index(drop=True)
-    val_df = df[df[patient_col].isin(val_ids)].copy().reset_index(drop=True)
-    test_df = df[df[patient_col].isin(test_ids)].copy().reset_index(drop=True)
-
-    return train_df, val_df, test_df
 
 def calculate_class_weights(df, target_col):
     """Helper to balance gradients against clinical minority classes."""
