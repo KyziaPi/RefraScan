@@ -234,7 +234,7 @@ def run_cross_validation(
 
             model.load_weights(fine_model_path)
 
-        print("\n[Validation Set Evaluation]")
+        print(f"\n[Fold {fold+1}/{n_splits} | Validation Set Evaluation]")
 
         v_res = evaluate_model(
                 model=model,
@@ -248,7 +248,7 @@ def run_cross_validation(
                 ],
             )
 
-        print("\n[Holdout Test Set Evaluation]")
+        print(f"\n[Fold {fold+1}/{n_splits} | Holdout Test Set Evaluation]")
 
         t_res = evaluate_model(
             model=model,
@@ -272,24 +272,33 @@ def run_cross_validation(
                 t_res.get(metric, 0)
             )
 
-    val_summary_df = pd.DataFrame({
-        "Fold": [f"Fold {i+1}" for i in range(n_splits)],
-        "Accuracy": val_metrics["accuracy"],
-        "Precision": val_metrics["precision"],
-        "Recall": val_metrics["recall"],
-        "F1 Score": val_metrics["f1"],
-    })
+        # --- Running per-fold summary (updates after every completed fold) ---
+        completed = len(val_metrics["accuracy"])
+        fold_names = [f"Fold {i+1}" for i in range(completed)]
 
-    test_summary_df = pd.DataFrame({
-        "Fold": [f"Fold {i+1}" for i in range(n_splits)],
-        "Accuracy": test_metrics["accuracy"],
-        "Precision": test_metrics["precision"],
-        "Recall": test_metrics["recall"],
-        "F1 Score": test_metrics["f1"],
-    })
+        val_summary_df = pd.DataFrame({
+            "Fold": fold_names,
+            "Accuracy": val_metrics["accuracy"],
+            "Precision": val_metrics["precision"],
+            "Recall": val_metrics["recall"],
+            "F1 Score": val_metrics["f1"],
+        })
+
+        test_summary_df = pd.DataFrame({
+            "Fold": fold_names,
+            "Accuracy": test_metrics["accuracy"],
+            "Precision": test_metrics["precision"],
+            "Recall": test_metrics["recall"],
+            "F1 Score": test_metrics["f1"],
+        })
+
+        print(f"\n--- Fold {fold+1}/{n_splits} Summary (Validation) ---")
+        print(val_summary_df.to_string(index=False))
+        print(f"\n--- Fold {fold+1}/{n_splits} Summary (Holdout Test) ---")
+        print(test_summary_df.to_string(index=False))
 
     print("\n" + "="*65)
-    print("FINAL CROSS VALIDATION SUMMARY")
+    print(f"    FINAL CROSS-VALIDATION SUMMARY ({completed}-FOLD AVERAGE)")
     print("="*65)
 
     print("\nValidation")
