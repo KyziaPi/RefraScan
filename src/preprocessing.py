@@ -202,42 +202,13 @@ def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16,
         image_loader if image_loader is not None else load_and_preprocess_image
     )
 
-    while True:
+    def process_batch(batch_df):
+        """Loads images + metadata + labels for one batch_df and packs them into arrays."""
         images = []
         metadata = []
         targets = []
 
-        if augment:
-            # --- TRAINING MODE: Equal Class-Balanced Sampling ---
-            samples_per_class = batch_size // len(class_indices)
-            selected_indices = []
-
-            for c, idxs in class_indices.items():
-                # Oversample minority classes with replacement
-                selected_indices.extend(
-                    np.random.choice(idxs, size=samples_per_class, replace=True)
-                )
-
-            # Fill any remainder slots to match exact batch_size
-            remaining = batch_size - len(selected_indices)
-            if remaining > 0:
-                selected_indices.extend(
-                    np.random.choice(df_copy.index, size=remaining, replace=True)
-                )
-
-            np.random.shuffle(selected_indices)
-        else:
-            # --- VAL / TEST MODE: Sequential / Standard Sampling ---
-            for start in range(0, len(df_copy), batch_size):
-
-                batch_df = df_copy.iloc[start:start+batch_size]
-
-                images=[]
-                metadata=[]
-                targets=[]
-
-        for idx,row in batch_df.iterrows():
-
+        for idx, row in batch_df.iterrows():
 
             # 1. Load image
             img_path = row["full_path"]
@@ -261,15 +232,54 @@ def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16,
             if label is not None:
                 targets.append(label)
 
-        # Convert to arrays and yield
         batch_images = np.array(images, dtype=np.float32)
         batch_meta = np.array(metadata, dtype=np.float32)
         batch_targets = np.array(targets, dtype=np.int32) if targets else None
 
-        if batch_targets is not None:
-            yield (batch_images, batch_meta), batch_targets
+        return batch_images, batch_meta, batch_targets
+
+    while True:
+        if augment:
+            # --- TRAINING MODE: Equal Class-Balanced Sampling ---
+            samples_per_class = batch_size // len(class_indices)
+            selected_indices = []
+
+            for c, idxs in class_indices.items():
+                # Oversample minority classes with replacement
+                selected_indices.extend(
+                    np.random.choice(idxs, size=samples_per_class, replace=True)
+                )
+
+            # Fill any remainder slots to match exact batch_size
+            remaining = batch_size - len(selected_indices)
+            if remaining > 0:
+                selected_indices.extend(
+                    np.random.choice(df_copy.index, size=remaining, replace=True)
+                )
+
+            np.random.shuffle(selected_indices)
+
+            batch_df = df_copy.loc[selected_indices]
+
+            batch_images, batch_meta, batch_targets = process_batch(batch_df)
+
+            if batch_targets is not None:
+                yield (batch_images, batch_meta), batch_targets
+            else:
+                yield (batch_images, batch_meta)
+
         else:
-            yield (batch_images, batch_meta)
+            # --- VAL / TEST MODE: Sequential / Standard Sampling ---
+            for start in range(0, len(df_copy), batch_size):
+
+                batch_df = df_copy.iloc[start:start + batch_size]
+
+                batch_images, batch_meta, batch_targets = process_batch(batch_df)
+
+                if batch_targets is not None:
+                    yield (batch_images, batch_meta), batch_targets
+                else:
+                    yield (batch_images, batch_meta)
 
 def split_data_by_patient(df, patient_col='ID', target_col='classification_encoded', test_size=0.30, val_ratio=0.50, random_state=42):
     """
