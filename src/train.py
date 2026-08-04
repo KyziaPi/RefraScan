@@ -101,6 +101,7 @@ def train_model(
             filepath=save_path,
             monitor='val_loss',
             save_best_only=True,
+            save_weights_only=True,
             verbose=1
         )
     ]
