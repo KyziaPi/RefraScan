@@ -79,24 +79,47 @@ def build_densenet121(
     base_model.trainable = False
 
     x_img = layers.GlobalAveragePooling2D()(base_model.output)
-    x_img = layers.Dense(256, activation='relu')(x_img)
-    x_img = layers.Dropout(dropout_rate)(x_img)
+    x_img = layers.BatchNormalization()(x_img)
 
-    # Metadata Branch
-    meta_input = layers.Input(shape=(num_metadata_features,), name="meta_input")
+    x_img = layers.Dense(
+        512,
+        activation='relu',
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4)
+    ) (x_img)
+
+    x_img = layers.Dropout(0.6)(x_img)
+
+    x_img = layers.Dense(
+        256,
+        activation='relu',
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4)
+    ) (x_img)
+
+    x_img = layers.Dropout(0.4)(x_img)
+
+    meta_input = layers.Input(
+        shape=(num_metadata_features,), 
+        name="meta_input"
+    )
+
     x_meta = layers.Dense(64, activation='relu')(meta_input)
+    x_meta = layers.BatchNormalization()(x_meta)
     x_meta = layers.Dropout(0.3)(x_meta)
 
-    # Fusion
     merged = layers.Concatenate()([x_img, x_meta])
 
-    x = layers.Dense(128, activation='relu')(merged)
-    x = layers.Dropout(dropout_rate)(x)
+    x = layers.Dense(
+        256,
+        activation='relu',
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4)
+    ) (merged)
+
+    x = layers.Dropout(0.5)(x)
 
     output = layers.Dense(
-        num_classes,
-        activation='softmax',
-        name="classification_output"
+        num_classes, 
+        activation='softmax', 
+        ame="classification_output"
     )(x)
 
     return models.Model(

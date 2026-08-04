@@ -66,7 +66,11 @@ def load_and_preprocess_image(img_path, target_size=(300, 300)):
         top = (th - nh) // 2
         left = (tw - nw) // 2
         padded[top : top + nh, left : left + nw] = resized
-        
+
+        img = apply_clahe(img)
+
+        h,w = img.shape[:2]
+
         return padded
         
         # 1. Apply CLAHE contrast enhancement on all images
@@ -121,7 +125,7 @@ def augment_image(img, class_weight=1.0, label_code=None):
 
     def apply_rotation(img_arr):
         # Angle ranges between ±(8° * intensity) up to ±15° max
-        angle_deg = random.uniform(-10.0, 10.0) * intensity
+        angle_deg = random.uniform(-5.0, 5.0) * intensity
         M = cv2.getRotationMatrix2D((w / 2, h / 2), angle_deg, 1.0)
         return cv2.warpAffine(img_arr, M, (w, h), borderMode=cv2.BORDER_REFLECT)
 
@@ -130,10 +134,9 @@ def augment_image(img, class_weight=1.0, label_code=None):
 
     def apply_brightness_contrast(img_arr):
         # Small delta scaled by class weight
-        brightness_delta = random.uniform(-0.08, 0.08) * intensity * 255.0
-        contrast_factor = random.uniform(
-            1.0 - (0.1 * intensity), 1.0 + (0.1 * intensity)
-        )
+        brightness_delta = random.uniform(-0.04, 0.04) * intensity * 255.0
+        contrast_factor = random.uniform(0.95, 1.05)
+        
         adjusted = (
             (img_arr - 127.5) * contrast_factor + 127.5 + brightness_delta
         )
@@ -157,7 +160,7 @@ def augment_image(img, class_weight=1.0, label_code=None):
         return cv2.warpAffine(img_arr, M, (w, h), borderMode=cv2.BORDER_REFLECT)
 
     # 3. Randomly select exact transforms up to max_transforms cap
-    transform_pool = [apply_rotation, apply_flip, apply_brightness_contrast, apply_zoom, apply_translation]
+    transform_pool = [apply_rotation, apply_flip, apply_brightness_contrast]
     selected_transforms = random.sample(transform_pool, min(max_transforms, len(transform_pool)))
 
     # 4. Sequential execution of selected capped transformations
@@ -225,12 +228,16 @@ def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16,
             np.random.shuffle(selected_indices)
         else:
             # --- VAL / TEST MODE: Sequential / Standard Sampling ---
-            selected_indices = np.random.choice(
-                df_copy.index, size=batch_size, replace=False
-            )
+            for start in range(0, len(df_copy), batch_size):
 
-        for idx in selected_indices:
-            row = df_copy.iloc[idx]
+                batch_df = df_copy.iloc[start:start+batch_size]
+
+                images=[]
+                metadata=[]
+                targets=[]
+
+        for idx,row in batch_df.iterrows():
+
 
             # 1. Load image
             img_path = row["full_path"]
