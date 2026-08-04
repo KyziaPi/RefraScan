@@ -119,7 +119,7 @@ def build_densenet121(
     output = layers.Dense(
         num_classes, 
         activation='softmax', 
-        ame="classification_output"
+        name="classification_output"
     )(x)
 
     return models.Model(
