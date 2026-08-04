@@ -58,7 +58,7 @@ def train_model(
     
     # Default save path to model name if not provided
     if save_path is None:
-        save_path = f"{model.name}.h5"
+        save_path = f"{model.name}.keras"
     
     # Ensure saving directory exists
     dir_name = os.path.dirname(save_path)
