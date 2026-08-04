@@ -167,7 +167,7 @@ def run_cross_validation(
         #updated: 6b. Optional fine-tuning phase
         if fine_tune:
             unfreeze_resnet_stage(model, stage_prefixes=("conv5_block3",))
-            fine_tune_path = f"finetuned_{model_name}_fold_{fold + 1}.h5"
+            fine_tune_path = f"finetuned_{model_name}_fold_{fold + 1}.keras"
             train_model(
                 model=model,
                 train_ds=train_gen,
