@@ -47,7 +47,7 @@ def build_resnet50(
     # Image Branch
     image_input = layers.Input(shape=input_image_shape, name="image_input")
     base_model = ResNet50(include_top=False, weights='imagenet', input_tensor=image_input)
-    base_model.trainable = True
+    base_model.trainable = False
 
     # Freeze all layers first
     for layer in base_model.layers:
@@ -100,9 +100,13 @@ def build_densenet121(
     if fine_tune:
         base_model.trainable = True
 
-        # Freeze most layers
-        for layer in base_model.layers[:-30]:
+        # Freeze all layers first
+        for layer in base_model.layers:
             layer.trainable = False
+
+        # Unfreeze the last 40 layers for fine-tuning
+        for layer in base_model.layers[-40:]:
+            layer.trainable = True
 
         # Keep BatchNorm layers frozen
         for layer in base_model.layers:
@@ -115,6 +119,9 @@ def build_densenet121(
     x_img = layers.GlobalAveragePooling2D()(base_model.output)
     x_img = layers.BatchNormalization()(x_img)
     x_img = layers.Dense(512, activation='relu', kernel_initializer='he_normal')(x_img)
+    x_img = layers.Dropout(0.5)(x_img)
+    x_img = layers.Dense(256, activation='relu', kernel_initializer='he_normal')(x_img)
+    x_img = layers.Dropout(0.3)(x_img)
 
     # Metadata Branch
     meta_input = layers.Input(shape=(num_metadata_features,), name="meta_input")
@@ -125,7 +132,8 @@ def build_densenet121(
     merged = layers.Concatenate()([x_img, x_meta])
 
     x = layers.Dense(128, activation='relu')(merged)
-    x = layers.Dropout(dropout_rate)(x)
+    x = layers.Dense(256, activation="relu", kernel_initializer='he_normal')(x)
+    x = layers.Dropout(0.3)(x)
 
     output = layers.Dense(
         num_classes,
