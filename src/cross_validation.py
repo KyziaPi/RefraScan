@@ -140,8 +140,18 @@ def run_cross_validation(
             input_image_shape=(300, 300, 3), 
             num_metadata_features=len(metadata_cols), 
             num_classes=3,
-            dropout_rate=0.4
+            dropout_rate=0.4,
+            fine_tune=True if model_name == "densenet121" else False
         )
+
+        # Check trainable layers
+        if model_name == "densenet121":
+            for layer in model.layers:
+                if "densenet121" in layer.name.lower():
+                    trainable = sum(l.trainable for l in layer.layers)
+                    total = len(layer.layers)
+                    print(f"DenseNet121 Trainable Layers: {trainable}/{total} layers are trainable (Fine-Tuning Enabled)")
+                    break
 
         fold_model_path = f"best_{model_name}_fold_{fold + 1}.h5"
         

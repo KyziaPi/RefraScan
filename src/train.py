@@ -1,6 +1,6 @@
 import os
 import tensorflow as tf
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 
 class SparseCategoricalFocalLoss(tf.keras.losses.Loss):
   """Custom Focal Loss that accepts sparse integer targets (0, 1, 2)."""
@@ -88,6 +88,13 @@ def train_model(
             filepath=save_path,
             monitor='val_loss',
             save_best_only=True,
+            verbose=1
+        ),
+        ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.2,
+            patience=3,
+            min_lr=1e-7,
             verbose=1
         )
     ]
