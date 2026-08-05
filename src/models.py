@@ -47,7 +47,20 @@ def build_resnet50(
     # Image Branch
     image_input = layers.Input(shape=input_image_shape, name="image_input")
     base_model = ResNet50(include_top=False, weights='imagenet', input_tensor=image_input)
-    base_model.trainable = False
+    base_model.trainable = True
+
+    # Freeze all layers first
+    for layer in base_model.layers:
+        layer.trainable = False
+
+    # Unfreeze only the last 30 layers
+    for layer in base_model.layers[-30:]:
+        layer.trainable = True
+
+    # Keep BatchNormalization layers frozen
+    for layer in base_model.layers:
+        if isinstance(layer, layers.BatchNormalization):
+            layer.trainable = False
 
     x_img = layers.GlobalAveragePooling2D()(base_model.output)
     x_img = layers.BatchNormalization()(x_img)
@@ -72,7 +85,8 @@ def build_densenet121(
     input_image_shape=(224, 224, 3), 
     num_metadata_features=1, 
     num_classes=3,
-    dropout_rate=0.4
+    dropout_rate=0.4,
+    fine_tune=False
 ):
     # Image Branch
     image_input = layers.Input(shape=input_image_shape, name="image_input")
@@ -83,7 +97,20 @@ def build_densenet121(
         input_tensor=image_input
     )
 
-    base_model.trainable = False
+    if fine_tune:
+        base_model.trainable = True
+
+        # Freeze most layers
+        for layer in base_model.layers[:-30]:
+            layer.trainable = False
+
+        # Keep BatchNorm layers frozen
+        for layer in base_model.layers:
+            if isinstance(layer, layers.BatchNormalization):
+                layer.trainable = False
+    else:
+
+        base_model.trainable = False
 
     x_img = layers.GlobalAveragePooling2D()(base_model.output)
     x_img = layers.BatchNormalization()(x_img)
@@ -116,13 +143,14 @@ def build_model(
     input_image_shape, 
     num_metadata_features=1, 
     num_classes=3,
-    dropout_rate=0.4
+    dropout_rate=0.4,
+    fine_tune=False
 ):
     if model_name == "efficientnet":
         return build_efficientnet(input_image_shape, num_metadata_features, num_classes, dropout_rate)
     elif model_name == "resnet50":
         return build_resnet50(input_image_shape, num_metadata_features, num_classes, dropout_rate)
     elif model_name == "densenet121":
-        return build_densenet121(input_image_shape, num_metadata_features, num_classes, dropout_rate)
+        return build_densenet121(input_image_shape, num_metadata_features, num_classes, dropout_rate, fine_tune)
     else:
         raise ValueError(f"Unknown model name: {model_name}. Choose from 'efficientnet', 'resnet50', or 'densenet121'.")
