@@ -21,16 +21,6 @@ def load_and_clean_data(csv_path, img_dir):
     df['full_path'] = df.apply(lambda r: os.path.join(img_dir, create_filename(r)), axis=1)
     return df
 
-def preprocess_metadata(df, numerical_cols):
-    """Encodes and scales tabular clinical features."""
-    df = df.copy()
-    
-    # Scale numerical metadata
-    scaler = MinMaxScaler()
-    df[numerical_cols] = scaler.fit_transform(df[numerical_cols].fillna(df[numerical_cols].median()))
-        
-    return df, scaler
-
 # For future testing
 def apply_clahe(img):
     """Applies CLAHE enhancement in LAB color space to boost retinal contrast."""
@@ -66,11 +56,7 @@ def load_and_preprocess_image(img_path, target_size=(300, 300)):
         top = (th - nh) // 2
         left = (tw - nw) // 2
         padded[top : top + nh, left : left + nw] = resized
-
-        img = apply_clahe(img)
-
-        h,w = img.shape[:2]
-
+        
         return padded
         
         # 1. Apply CLAHE contrast enhancement on all images
@@ -125,7 +111,7 @@ def augment_image(img, class_weight=1.0, label_code=None):
 
     def apply_rotation(img_arr):
         # Angle ranges between ±(8° * intensity) up to ±15° max
-        angle_deg = random.uniform(-5.0, 5.0) * intensity
+        angle_deg = random.uniform(-10.0, 10.0) * intensity
         M = cv2.getRotationMatrix2D((w / 2, h / 2), angle_deg, 1.0)
         return cv2.warpAffine(img_arr, M, (w, h), borderMode=cv2.BORDER_REFLECT)
 
@@ -134,9 +120,10 @@ def augment_image(img, class_weight=1.0, label_code=None):
 
     def apply_brightness_contrast(img_arr):
         # Small delta scaled by class weight
-        brightness_delta = random.uniform(-0.04, 0.04) * intensity * 255.0
-        contrast_factor = random.uniform(0.95, 1.05)
-        
+        brightness_delta = random.uniform(-0.08, 0.08) * intensity * 255.0
+        contrast_factor = random.uniform(
+            1.0 - (0.1 * intensity), 1.0 + (0.1 * intensity)
+        )
         adjusted = (
             (img_arr - 127.5) * contrast_factor + 127.5 + brightness_delta
         )
@@ -160,7 +147,7 @@ def augment_image(img, class_weight=1.0, label_code=None):
         return cv2.warpAffine(img_arr, M, (w, h), borderMode=cv2.BORDER_REFLECT)
 
     # 3. Randomly select exact transforms up to max_transforms cap
-    transform_pool = [apply_rotation, apply_flip, apply_brightness_contrast]
+    transform_pool = [apply_rotation, apply_flip, apply_brightness_contrast, apply_zoom, apply_translation]
     selected_transforms = random.sample(transform_pool, min(max_transforms, len(transform_pool)))
 
     # 4. Sequential execution of selected capped transformations
@@ -202,13 +189,38 @@ def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16,
         image_loader if image_loader is not None else load_and_preprocess_image
     )
 
-    def process_batch(batch_df):
-        """Loads images + metadata + labels for one batch_df and packs them into arrays."""
+    while True:
         images = []
         metadata = []
         targets = []
 
-        for idx, row in batch_df.iterrows():
+        if augment:
+            # --- TRAINING MODE: Equal Class-Balanced Sampling ---
+            samples_per_class = batch_size // len(class_indices)
+            selected_indices = []
+
+            for c, idxs in class_indices.items():
+                # Oversample minority classes with replacement
+                selected_indices.extend(
+                    np.random.choice(idxs, size=samples_per_class, replace=True)
+                )
+
+            # Fill any remainder slots to match exact batch_size
+            remaining = batch_size - len(selected_indices)
+            if remaining > 0:
+                selected_indices.extend(
+                    np.random.choice(df_copy.index, size=remaining, replace=True)
+                )
+
+            np.random.shuffle(selected_indices)
+        else:
+            # --- VAL / TEST MODE: Sequential / Standard Sampling ---
+            selected_indices = np.random.choice(
+                df_copy.index, size=batch_size, replace=False
+            )
+
+        for idx in selected_indices:
+            row = df_copy.iloc[idx]
 
             # 1. Load image
             img_path = row["full_path"]
@@ -232,101 +244,15 @@ def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16,
             if label is not None:
                 targets.append(label)
 
+        # Convert to arrays and yield
         batch_images = np.array(images, dtype=np.float32)
         batch_meta = np.array(metadata, dtype=np.float32)
         batch_targets = np.array(targets, dtype=np.int32) if targets else None
 
-        return batch_images, batch_meta, batch_targets
-
-    while True:
-        if augment:
-            # --- TRAINING MODE: Equal Class-Balanced Sampling ---
-            samples_per_class = batch_size // len(class_indices)
-            selected_indices = []
-
-            for c, idxs in class_indices.items():
-                # Oversample minority classes with replacement
-                selected_indices.extend(
-                    np.random.choice(idxs, size=samples_per_class, replace=True)
-                )
-
-            # Fill any remainder slots to match exact batch_size
-            remaining = batch_size - len(selected_indices)
-            if remaining > 0:
-                selected_indices.extend(
-                    np.random.choice(df_copy.index, size=remaining, replace=True)
-                )
-
-            np.random.shuffle(selected_indices)
-
-            batch_df = df_copy.loc[selected_indices]
-
-            batch_images, batch_meta, batch_targets = process_batch(batch_df)
-
-            if batch_targets is not None:
-                yield (batch_images, batch_meta), batch_targets
-            else:
-                yield (batch_images, batch_meta)
-
+        if batch_targets is not None:
+            yield (batch_images, batch_meta), batch_targets
         else:
-            # --- VAL / TEST MODE: Sequential / Standard Sampling ---
-            for start in range(0, len(df_copy), batch_size):
-
-                batch_df = df_copy.iloc[start:start + batch_size]
-
-                batch_images, batch_meta, batch_targets = process_batch(batch_df)
-
-                if batch_targets is not None:
-                    yield (batch_images, batch_meta), batch_targets
-                else:
-                    yield (batch_images, batch_meta)
-
-def split_data_by_patient(df, patient_col='ID', target_col='classification_encoded', test_size=0.30, val_ratio=0.50, random_state=42):
-    """
-    Splits a DataFrame by patient ID using stratified sampling to prevent data leakage 
-    across bilateral eye samples while maintaining class balance.
-
-    Parameters:
-      df (pd.DataFrame): The input DataFrame.
-      patient_col (str): Column name containing patient IDs.
-      target_col (str): Column name containing target classification labels.
-      test_size (float): Fraction of patients for temp split (Val + Test). Default 0.30 (70% Train).
-      val_ratio (float): Fraction of temp split assigned to Val vs Test. Default 0.50 (15% Val, 15% Test).
-      random_state (int): Seed for reproducibility.
-
-    Returns:
-      train_df, val_df, test_df (tuple of pd.DataFrame): DataFrames for train, val, and test splits.
-    """
-    df = df.copy()
-
-    # Get primary classification label per unique patient ID for stratification
-    patient_classes = df.groupby(patient_col)[target_col].first()
-    unique_ids = patient_classes.index.values
-    unique_labels = patient_classes.values
-
-    # 1. First split: Train vs Temp (Val + Test)
-    train_ids, temp_ids, _, temp_labels = train_test_split(
-        unique_ids,
-        unique_labels,
-        test_size=test_size,
-        stratify=unique_labels,
-        random_state=random_state
-    )
-
-    # 2. Second split: Temp into Val and Test
-    val_ids, test_ids = train_test_split(
-        temp_ids,
-        test_size=val_ratio,
-        stratify=temp_labels,
-        random_state=random_state
-    )
-
-    # 3. Filter full dataset by patient IDs to preserve all eye images without leakage
-    train_df = df[df[patient_col].isin(train_ids)].copy().reset_index(drop=True)
-    val_df = df[df[patient_col].isin(val_ids)].copy().reset_index(drop=True)
-    test_df = df[df[patient_col].isin(test_ids)].copy().reset_index(drop=True)
-
-    return train_df, val_df, test_df
+            yield (batch_images, batch_meta)
 
 def calculate_class_weights(df, target_col):
     """Helper to balance gradients against clinical minority classes."""
