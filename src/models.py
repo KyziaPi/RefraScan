@@ -116,10 +116,15 @@ def build_densenet121(
         name="classification_output"
     )(x)
 
-    return models.Model(
+    model = models.Model(
         inputs=[image_input, meta_input],
         outputs=output
     )
+
+    # Save the DenseNet backbone for fine-tuning later
+    model.base_model = base_model
+
+    return model
 
 def build_model(
     model_name,
