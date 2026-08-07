@@ -124,7 +124,7 @@ def train_model(
        base_model = None
 
        for layer in model.layers:
-          if "densenet" in layer.name.lower():
+          if isinstance(layer, tf.keras.Model):
              base_model = layer
              break
 
