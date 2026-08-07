@@ -49,18 +49,7 @@ def build_resnet50(
     base_model = ResNet50(include_top=False, weights='imagenet', input_tensor=image_input)
     base_model.trainable = False
 
-    # Freeze all layers first
-    for layer in base_model.layers:
-        layer.trainable = False
-
-    # Unfreeze only the last 30 layers
-    for layer in base_model.layers[-30:]:
-        layer.trainable = False
-
-    # Keep BatchNormalization layers frozen
-    for layer in base_model.layers:
-        if isinstance(layer, layers.BatchNormalization):
-            layer.trainable = False
+    base_model.trainable = False
 
     x_img = layers.GlobalAveragePooling2D()(base_model.output)
     x_img = layers.BatchNormalization()(x_img)
@@ -138,7 +127,6 @@ def build_model(
     num_metadata_features=1, 
     num_classes=3,
     dropout_rate=0.4,
-    fine_tune=False
 ):
     if model_name == "efficientnet":
         return build_efficientnet(input_image_shape, num_metadata_features, num_classes, dropout_rate)

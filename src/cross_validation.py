@@ -137,7 +137,7 @@ def run_cross_validation(
         # 5. Build a fresh model for each fold
         model = build_model(
             model_name=model_name,
-            input_image_shape=(224, 224, 3), 
+            input_image_shape=(300, 300, 3), 
             num_metadata_features=len(metadata_cols), 
             num_classes=3,
             dropout_rate=0.4
