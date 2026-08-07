@@ -91,8 +91,9 @@ def train_model(
         ),
         ModelCheckpoint(
             filepath=save_path,
-            monitor='val_loss',
             save_best_only=True,
+            save_weights_only=True,
+            monitor='val_loss',
             verbose=1
         ),
         ReduceLROnPlateau(
