@@ -1,6 +1,7 @@
 import os
 import tensorflow as tf
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+from tensorflow.keras.applications import DenseNet121
 
 class SparseCategoricalFocalLoss(tf.keras.losses.Loss):
   """Custom Focal Loss that accepts sparse integer targets (0, 1, 2)."""
