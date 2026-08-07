@@ -55,7 +55,7 @@ def build_resnet50(
 
     # Unfreeze only the last 30 layers
     for layer in base_model.layers[-30:]:
-        layer.trainable = True
+        layer.trainable = False
 
     # Keep BatchNormalization layers frozen
     for layer in base_model.layers:
@@ -86,7 +86,6 @@ def build_densenet121(
     num_metadata_features=1, 
     num_classes=3,
     dropout_rate=0.4,
-    fine_tune=False
 ):
     # Image Branch
     image_input = layers.Input(shape=input_image_shape, name="image_input")
@@ -97,24 +96,9 @@ def build_densenet121(
         input_tensor=image_input
     )
 
-    if fine_tune:
-        base_model.trainable = True
+    # Freeze the pretrained backbone
+    base_model.trainable = False
 
-        # Freeze all layers first
-        for layer in base_model.layers:
-            layer.trainable = False
-
-        # Unfreeze the last 40 layers for fine-tuning
-        for layer in base_model.layers[-40:]:
-            layer.trainable = True
-
-        # Keep BatchNorm layers frozen
-        for layer in base_model.layers:
-            if isinstance(layer, layers.BatchNormalization):
-                layer.trainable = False
-    else:
-
-        base_model.trainable = False
 
     x_img = layers.GlobalAveragePooling2D()(base_model.output)
     x_img = layers.BatchNormalization()(x_img)
@@ -131,8 +115,10 @@ def build_densenet121(
     # Fusion
     merged = layers.Concatenate()([x_img, x_meta])
 
-    x = layers.Dense(128, activation='relu')(merged)
-    x = layers.Dense(256, activation="relu", kernel_initializer='he_normal')(x)
+    x= layers.BatchNormalization()(merged)
+    x = layers.Dense(256, activation='relu', kernel_initializer='he_normal')(x)
+    x = layers.Dropout(0.4)(x)
+    x = layers.Dense(128, activation='relu', kernel_initializer='he_normal')(x)
     x = layers.Dropout(0.3)(x)
 
     output = layers.Dense(
@@ -159,6 +145,6 @@ def build_model(
     elif model_name == "resnet50":
         return build_resnet50(input_image_shape, num_metadata_features, num_classes, dropout_rate)
     elif model_name == "densenet121":
-        return build_densenet121(input_image_shape, num_metadata_features, num_classes, dropout_rate, fine_tune)
+        return build_densenet121(input_image_shape, num_metadata_features, num_classes, dropout_rate)
     else:
         raise ValueError(f"Unknown model name: {model_name}. Choose from 'efficientnet', 'resnet50', or 'densenet121'.")

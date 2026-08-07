@@ -137,21 +137,11 @@ def run_cross_validation(
         # 5. Build a fresh model for each fold
         model = build_model(
             model_name=model_name,
-            input_image_shape=(300, 300, 3), 
+            input_image_shape=(224, 224, 3), 
             num_metadata_features=len(metadata_cols), 
             num_classes=3,
-            dropout_rate=0.4,
-            fine_tune=True if model_name == "densenet121" else False
+            dropout_rate=0.4
         )
-
-        # Check trainable layers
-        if model_name == "densenet121":
-            for layer in model.layers:
-                if "densenet121" in layer.name.lower():
-                    trainable = sum(l.trainable for l in layer.layers)
-                    total = len(layer.layers)
-                    print(f"DenseNet121 Trainable Layers: {trainable}/{total} layers are trainable (Fine-Tuning Enabled)")
-                    break
 
         fold_model_path = f"best_{model_name}_fold_{fold + 1}.h5"
         
@@ -166,7 +156,11 @@ def run_cross_validation(
             steps_per_epoch=steps_per_epoch,
             validation_steps=validation_steps,
             save_path=fold_model_path,
-            class_weight=class_weights
+            class_weight=class_weights,
+
+            fine_tune=True,
+            fine_tune_epochs=10,
+            fine_tune_lr=1e-5,
         )
 
         # 7. Evaluate the best model on the fold's validation set

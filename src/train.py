@@ -49,7 +49,10 @@ def train_model(
     steps_per_epoch=None,
     validation_steps=None,
     save_path=None,
-    class_weight=None
+    class_weight=None,
+    fine_tune=False,
+    fine_tune_epochs=10,
+    fine_tune_lr=1e-5,
 ):
     """
     Compiles the model, configures early stopping and checkpoints, 
@@ -108,5 +111,61 @@ def train_model(
         epochs=epochs,
         callbacks=callbacks,
     )
+
+    # Fine-tuning Stage
+    if fine_tune:
+       print("\nStarting fine-tuning...\n")
+
+       # Load the best weights from Stage 1
+       model.load_weights(save_path)
+
+       # Find the pretrained backbone
+       base_model = None
+
+       for layer in model.layers:
+          if "densenet" in layer.name.lower():
+             base_model = layer
+             break
+
+       if base_model is None:
+           raise ValueError("Could not locate DenseNet121 backbone.")
+
+       # Freeze all backbone layers
+       for layer in base_model.layers:
+           layer.trainable = False
+
+       # Unfreeze only the last 40 layers
+       for layer in base_model.layers[-40:]:
+           layer.trainable = True
+
+       # Keep BatchNormalization layers frozen
+       for layer in base_model.layers:
+            if isinstance(layer, tf.keras.layers.BatchNormalization):
+                layer.trainable = False
+
+       trainable = sum(layer.trainable for layer in base_model.layers)
+              total = len(base_model.layers)
+       
+              print(f"DenseNet121 Fine-Tuning: {trainable}/{total} layers are trainable.")
+
+       # Recompile with a lower learning rate
+       optimizer = tf.keras.optimizers.Adam(
+           learning_rate=fine_tune_lr
+       )
+
+       model.compile(
+           optimizer=optimizer,
+           loss=loss_fn,
+           metrics=["accuracy"]
+        )
+
+       history_fine = model.fit(
+           train_ds,
+           steps_per_epoch=steps_per_epoch,
+           validation_data=val_ds,
+           validation_steps=validation_steps,
+           epochs=fine_tune_epochs,
+           callbacks=callbacks,
+        )
 
     return history
