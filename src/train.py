@@ -122,15 +122,7 @@ def train_model(
        model.load_weights(save_path)
 
        # Find the pretrained backbone
-       base_model = None
-
-       for layer in model.layers:
-          if isinstance(layer, tf.keras.Model):
-             base_model = layer
-             break
-
-       if base_model is None:
-           raise ValueError("Could not locate DenseNet121 backbone.")
+       base_model = model.base_model
 
        # Freeze all backbone layers
        for layer in base_model.layers:
