@@ -50,7 +50,8 @@ def train_model(
     validation_steps=None,
     save_path=None,
     class_weight=None,
-    fine_tune=False,
+
+    fine_tune=True,
     fine_tune_epochs=10,
     fine_tune_lr=1e-5,
 ):
@@ -144,9 +145,9 @@ def train_model(
                 layer.trainable = False
 
        trainable = sum(layer.trainable for layer in base_model.layers)
-              total = len(base_model.layers)
+       total = len(base_model.layers)
        
-              print(f"DenseNet121 Fine-Tuning: {trainable}/{total} layers are trainable.")
+       print(f"DenseNet121 Fine-Tuning: {trainable}/{total} layers are trainable.")
 
        # Recompile with a lower learning rate
        optimizer = tf.keras.optimizers.Adam(
@@ -167,5 +168,11 @@ def train_model(
            epochs=fine_tune_epochs,
            callbacks=callbacks,
         )
+
+       # Save the final fine-tuned model
+       model.save_weights(save_path)
+
+       
+       return history_fine
 
     return history
