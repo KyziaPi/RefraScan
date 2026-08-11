@@ -312,8 +312,13 @@ def run_cross_validation(
         # 9. LOAD BEST FINE-TUNED WEIGHTS
         # =====================================================
 
+        fine_tuned_model_path = fold_model_path.replace(
+            ".weights.h5",
+            ".finetuned.weights.h5"
+        )
+
         model.load_weights(
-            fold_model_path
+            fine_tuned_model_path
         )
 
         # =====================================================
