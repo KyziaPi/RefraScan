@@ -9,7 +9,7 @@ from tensorflow.keras.callbacks import (
 
 class SparseCategoricalFocalLoss(tf.keras.losses.Loss):
     """
-    Custom Focal Loss that accepts sparse integer targets (0, 1, 2).
+    Custom Focal Loss for sparse integer targets.
     """
 
     def __init__(
@@ -23,10 +23,6 @@ class SparseCategoricalFocalLoss(tf.keras.losses.Loss):
         self.gamma = gamma
 
         if class_weight is not None:
-            # Convert:
-            # {0: w0, 1: w1, 2: w2}
-            # into:
-            # [w0, w1, w2]
 
             weights = [
                 class_weight[i]
@@ -43,7 +39,6 @@ class SparseCategoricalFocalLoss(tf.keras.losses.Loss):
 
     def call(self, y_true, y_pred):
 
-        # Convert labels to integer
         y_true = tf.cast(
             y_true,
             tf.int32
@@ -54,30 +49,24 @@ class SparseCategoricalFocalLoss(tf.keras.losses.Loss):
             [-1]
         )
 
-        # Prevent numerical instability
         y_pred = tf.clip_by_value(
             y_pred,
             1e-7,
             1.0 - 1e-7
         )
 
-        # Convert sparse labels to one-hot
-        num_classes = tf.shape(
-            y_pred
-        )[-1]
+        num_classes = tf.shape(y_pred)[-1]
 
         y_true_one_hot = tf.one_hot(
             y_true,
             depth=num_classes
         )
 
-        # Probability of the correct class
         p_t = tf.reduce_sum(
             y_true_one_hot * y_pred,
             axis=-1
         )
 
-        # Focal Loss
         focal_loss = (
             -tf.pow(
                 1.0 - p_t,
@@ -86,7 +75,6 @@ class SparseCategoricalFocalLoss(tf.keras.losses.Loss):
             * tf.math.log(p_t)
         )
 
-        # Apply class weights
         if self.class_weight is not None:
 
             alpha_t = tf.gather(
@@ -117,30 +105,32 @@ def train_model(
     fine_tune_epochs=10,
     fine_tune_lr=1e-5,
 ):
+
     """
     Two-stage transfer learning.
 
     Stage 1:
-        Pretrained backbone remains frozen.
+        Pretrained DenseNet121 backbone frozen.
 
     Stage 2:
-        Last 40 backbone layers are unfrozen
-        for fine-tuning.
+        Last 40 DenseNet121 layers unfrozen.
 
-    BatchNormalization layers remain frozen
-    during fine-tuning.
+    BatchNormalization layers remain frozen.
+
+    IMPORTANT:
+        The final save_path always contains the BEST
+        fine-tuned model so cross_validation.py can
+        load it without modification.
     """
 
-    # =========================================================
+    # =====================================================
     # SAVE PATH
-    # =========================================================
+    # =====================================================
 
     if save_path is None:
         save_path = f"{model.name}.weights.h5"
 
-    save_dir = os.path.dirname(
-        save_path
-    )
+    save_dir = os.path.dirname(save_path)
 
     if save_dir:
         os.makedirs(
@@ -148,18 +138,18 @@ def train_model(
             exist_ok=True
         )
 
-    # =========================================================
+    # =====================================================
     # LOSS
-    # =========================================================
+    # =====================================================
 
     loss_fn = SparseCategoricalFocalLoss(
         gamma=2.0,
         class_weight=class_weight
     )
 
-    # =========================================================
+    # =====================================================
     # STAGE 1
-    # =========================================================
+    # =====================================================
 
     print("\n" + "=" * 65)
     print("STAGE 1: TRANSFER LEARNING")
@@ -177,9 +167,9 @@ def train_model(
         "Pretrained backbone: FROZEN"
     )
 
-    # ---------------------------------------------------------
-    # Compile Stage 1
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
+    # Compile
+    # -----------------------------------------------------
 
     optimizer = tf.keras.optimizers.Adam(
         learning_rate=learning_rate
@@ -191,11 +181,9 @@ def train_model(
         metrics=["accuracy"]
     )
 
-    # ---------------------------------------------------------
-    # Stage 1 checkpoint
-    # ---------------------------------------------------------
-
-    stage1_path = save_path
+    # -----------------------------------------------------
+    # Stage 1 callbacks
+    # -----------------------------------------------------
 
     stage1_callbacks = [
 
@@ -207,7 +195,7 @@ def train_model(
         ),
 
         ModelCheckpoint(
-            filepath=stage1_path,
+            filepath=save_path,
             monitor="val_loss",
             save_best_only=True,
             save_weights_only=True,
@@ -223,9 +211,9 @@ def train_model(
         )
     ]
 
-    # ---------------------------------------------------------
-    # Train Stage 1
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
+    # Stage 1 training
+    # -----------------------------------------------------
 
     history = model.fit(
         train_ds,
@@ -236,23 +224,23 @@ def train_model(
         callbacks=stage1_callbacks
     )
 
-    # =========================================================
-    # LOAD BEST STAGE 1 MODEL
-    # =========================================================
+    # -----------------------------------------------------
+    # Load best Stage 1 weights
+    # -----------------------------------------------------
 
-    if os.path.exists(stage1_path):
+    if os.path.exists(save_path):
 
         print(
             "\nLoading best Stage 1 weights..."
         )
 
         model.load_weights(
-            stage1_path
+            save_path
         )
 
-    # =========================================================
+    # =====================================================
     # STAGE 2: FINE-TUNING
-    # =========================================================
+    # =====================================================
 
     if fine_tune:
 
@@ -260,9 +248,9 @@ def train_model(
         print("STAGE 2: DENSENET121 FINE-TUNING")
         print("=" * 65)
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # Get backbone
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         if not hasattr(
             model,
@@ -272,29 +260,29 @@ def train_model(
             raise AttributeError(
                 "The model does not contain "
                 "'base_model'. "
-                "Your models.py must expose "
+                "The DenseNet121 model must expose "
                 "the pretrained backbone."
             )
 
         base_model = model.base_model
 
-        # -----------------------------------------------------
-        # Freeze everything first
-        # -----------------------------------------------------
+        # -------------------------------------------------
+        # Freeze everything
+        # -------------------------------------------------
 
         for layer in base_model.layers:
             layer.trainable = False
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # Unfreeze last 40 layers
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         for layer in base_model.layers[-40:]:
             layer.trainable = True
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # Keep BatchNormalization frozen
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         for layer in base_model.layers:
 
@@ -304,9 +292,9 @@ def train_model(
             ):
                 layer.trainable = False
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # Display trainable layers
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         trainable_layers = sum(
             layer.trainable
@@ -333,9 +321,9 @@ def train_model(
             f"{fine_tune_epochs}"
         )
 
-        # -----------------------------------------------------
-        # Recompile with LOWER learning rate
-        # -----------------------------------------------------
+        # -------------------------------------------------
+        # Recompile
+        # -------------------------------------------------
 
         fine_optimizer = tf.keras.optimizers.Adam(
             learning_rate=fine_tune_lr
@@ -347,14 +335,16 @@ def train_model(
             metrics=["accuracy"]
         )
 
-        # =====================================================
+        # =================================================
         # FINE-TUNING CHECKPOINT
-        # =====================================================
+        # =================================================
 
-        fine_tune_path = save_path.replace(
-            ".weights.h5",
-            ".finetuned.weights.h5"
-        )
+        # IMPORTANT:
+        # Use the SAME save_path.
+        #
+        # This means cross_validation.py will automatically
+        # load the best fine-tuned weights.
+        # =================================================
 
         stage2_callbacks = [
 
@@ -366,7 +356,7 @@ def train_model(
             ),
 
             ModelCheckpoint(
-                filepath=fine_tune_path,
+                filepath=save_path,
                 monitor="val_loss",
                 save_best_only=True,
                 save_weights_only=True,
@@ -382,9 +372,9 @@ def train_model(
             )
         ]
 
-        # =====================================================
+        # =================================================
         # FINE-TUNE
-        # =====================================================
+        # =================================================
 
         history_fine = model.fit(
             train_ds,
@@ -395,29 +385,29 @@ def train_model(
             callbacks=stage2_callbacks
         )
 
-        # =====================================================
-        # LOAD BEST FINE-TUNED MODEL
-        # =====================================================
+        # =================================================
+        # LOAD BEST FINE-TUNED WEIGHTS
+        # =================================================
 
-        if os.path.exists(
-            fine_tune_path
-        ):
+        if os.path.exists(save_path):
 
             print(
-                "\nLoading best fine-tuned weights..."
+                "\nLoading BEST fine-tuned weights..."
             )
 
             model.load_weights(
-                fine_tune_path
+                save_path
             )
 
-        print("\nFine-tuning completed.")
+        print(
+            "\nFine-tuning completed."
+        )
 
         return history_fine
 
-    # =========================================================
+    # =====================================================
     # NO FINE-TUNING
-    # =========================================================
+    # =====================================================
 
     print(
         "\nFine-tuning disabled."
