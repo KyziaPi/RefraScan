@@ -27,9 +27,8 @@ def build_efficientnet(
     image_input = layers.Input(shape=input_image_shape, name="image_input")
     base_model = EfficientNetB3(
         include_top=False,
-        weights="imagenet",
-        input_tensor=image_input,
-        name="efficientnetb3_backbone",
+        weights=weights,
+        input_tensor=image_input
     )
     base_model.trainable = False
 
