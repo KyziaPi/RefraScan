@@ -1,299 +1,309 @@
-# src/preprocessing.py
 import os
-import pandas as pd
-import numpy as np
-import cv2
 import random
-import tensorflow as tf
+import cv2
 import joblib
+import numpy as np
+import pandas as pd
+
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.model_selection import train_test_split
 from sklearn.utils import class_weight
+
+CLASS_NAMES = ["Emmetropia", "Myopia", "Hyperopia"]
+CLASS_MAPPING = {"Emmetropia": 0, "Myopia": 1, "Hyperopia": 2}
+
+# Refractive measurements are intentionally excluded from every model input.
+TARGET_DERIVED_COLUMNS = {
+    "sphere",
+    "cylinder",
+    "spherical_equivalent",
+    "spherical equivalent",
+    "spherical_equivalent_d",
+    "se",
+}
 
 def load_and_clean_data(csv_path, img_dir):
     """Loads the dataset and maps filenames natively for Kaggle environment."""
     df = pd.read_csv(csv_path)
+    required_cols = {"ID", "eye_side", "classification"}
+    missing = required_cols - set(df.columns)
+
+    if missing:
+        raise ValueError(f"Missing required dataset columns: {sorted(missing)}")
     
     def create_filename(row):
-        side = "OD" if row['eye_side'] == 'right' else "OS"
+        side = "OD" if str(row['eye_side'].lower()) == 'right' else "OS"
         return f"RET{str(row['ID']).zfill(3)}{side}.jpg"
     
     df['full_path'] = df.apply(lambda r: os.path.join(img_dir, create_filename(r)), axis=1)
     return df
 
-# For future testing
-def apply_clahe(img):
-    """Applies CLAHE enhancement in LAB color space to boost retinal contrast."""
-    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
-    l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    cl = clahe.apply(l)
-    enhanced = cv2.cvtColor(cv2.merge((cl, a, b)), cv2.COLOR_LAB2RGB)
-    return enhanced
+# Added a function to validate the dataset before training
+def validate_dataset(df, patient_col="ID", target_col="classification"):
+    """
+    Perform the initial dataset checks required before model training.
+
+    This function deliberately does not use refractive measurements as model
+    inputs. If sphere/cylinder/spherical-equivalent columns are present, they
+    are reported as target-derived fields and must not enter the generators.
+    """
+    print("\n" + "=" * 70)
+    print("DATASET VALIDATION")
+    print("=" * 70)
+
+    if df.empty:
+        raise ValueError("Dataset is empty.")
+
+    missing = [c for c in [patient_col, target_col, "full_path"] if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    print(f"Total images/records : {len(df)}")
+    print(f"Unique patients      : {df[patient_col].nunique()}")
+    print(f"Missing labels       : {df[target_col].isna().sum()}")
+    print(f"Duplicate rows       : {df.duplicated().sum()}")
+
+    if df[target_col].isna().any():
+        raise ValueError("Some records have missing target labels.")
+
+    invalid_labels = set(df[target_col].unique()) - set(CLASS_MAPPING.keys())
+    if invalid_labels:
+        raise ValueError(f"Unexpected classification labels: {invalid_labels}")
+
+    print("\nClass distribution:")
+    print(df[target_col].value_counts().reindex(CLASS_NAMES, fill_value=0))
+
+    # Both eyes must remain in the same split. We explicitly inspect whether
+    # a patient has more than one class before proceeding.
+    patient_label_counts = df.groupby(patient_col)[target_col].nunique()
+    mixed_patients = patient_label_counts[patient_label_counts > 1]
+    print(f"\nPatients with multiple target classes: {len(mixed_patients)}")
+    if len(mixed_patients) > 0:
+        print(mixed_patients.head(10))
+        raise ValueError(
+            "Some patients have different target classes between records. "
+            "Resolve these cases before patient-level stratified splitting."
+        )
+
+    # Explicitly identify target-derived measurements so they can never be
+    # accidentally added to metadata_cols.
+    derived_present = [c for c in df.columns if c.lower() in TARGET_DERIVED_COLUMNS]
+    if derived_present:
+        print("\nTarget-derived refractive columns detected and EXCLUDED from model inputs:")
+        print(derived_present)
+
+    # Verify image files before training.
+    exists = df["full_path"].map(os.path.isfile)
+    print(f"\nExisting image files : {exists.sum()}/{len(exists)}")
+    if not exists.all():
+        missing_paths = df.loc[~exists, "full_path"].head(10).tolist()
+        print("Example missing paths:", missing_paths)
+        raise FileNotFoundError("One or more referenced fundus images do not exist.")
+
+    # Check that patients have both eyes when expected, but do not force this
+    # as a requirement because the dataset may legitimately contain one eye.
+    if "eye_side" in df.columns:
+        eye_counts = df.groupby(patient_col)["eye_side"].nunique()
+        print(f"Patients with >=2 eye records: {(eye_counts >= 2).sum()}/{len(eye_counts)}")
+
+    return df
+
+def encode_target(df, source_col="classification", target_col="classification_encoded"):
+    """Encode the three clinical classes using the fixed class mapping."""
+    df = df.copy()
+    df[target_col] = df[source_col].map(CLASS_MAPPING)
+    if df[target_col].isna().any():
+        raise ValueError("Target encoding produced missing values.")
+    df[target_col] = df[target_col].astype(int)
+    return df
+
+def majority_class_baseline(df, target_col="classification_encoded"):
+    """Return the majority-class baseline for reference."""
+    counts = df[target_col].value_counts().sort_index()
+    majority_class = int(counts.idxmax())
+    accuracy = float(counts.max() / counts.sum())
+    return {
+        "majority_class": majority_class,
+        "majority_class_name": CLASS_NAMES[majority_class],
+        "accuracy": accuracy,
+        "class_counts": counts.to_dict(),
+    }
 
 def load_and_preprocess_image(img_path, target_size=(300, 300)):
-    """
-    Loads image, and handles padding vs standard resize.
-    """
-    try:
-        img = cv2.imread(img_path)
-        if img is None:
-            raise FileNotFoundError(f"Image not found at path: {img_path}")
-            
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        
-        # Calculate padding dimensions
-        h, w = img.shape[:2]
-        th, tw = target_size
-        scale = min(tw / w, th / h)
-        nw, nh = int(w * scale), int(h * scale)
-        
-        # Resize image keeping aspect ratio
-        resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
+    """Load an RGB fundus image and resize it with preserved aspect ratio."""
+    img = cv2.imread(img_path)
+    if img is None:
+        raise FileNotFoundError(f"Image not found at path: {img_path}")
 
-        # Create canvas and center the image
-        padded = np.zeros((th, tw, 3), dtype=np.uint8)
-        top = (th - nh) // 2
-        left = (tw - nw) // 2
-        padded[top : top + nh, left : left + nw] = resized
-        
-        return padded
-        
-        # 1. Apply CLAHE contrast enhancement on all images
-        #img = apply_clahe(img)
-        
-        # 2. Resize image
-        #img_tensor = tf.convert_to_tensor(img, dtype=tf.float32)
-        #padded_tensor = tf.image.resize_with_pad(img_tensor, target_size[0], target_size[1])
-        #img = padded_tensor.numpy().astype(np.uint8)
-            
-        #return img
-    except Exception as e:
-        return np.zeros((target_size[0], target_size[1], 3), dtype=np.uint8)
-    
-def augment_image(img, class_weight=1.0, label_code=None):
-    """
-    Applies capped number of light augmentations with intensity scaled by class_weight.
-    
-    Caps per original image:
-      - Myopia (1): Max 1 transformation (or none)
-      - Hyperopia (2): Max 2 transformations
-      - Emmetropia (0): Max 3 transformations
-      
-    Allowed transforms (all mild):
-      - Small rotation (±10° to ±15°)
-      - Horizontal flip
-      - Slight brightness/contrast adjustment
-      - Small zoom (crop & resize)
-      - Small translation (shift)
-    """
-    # Ensure tensor/array is converted to float32 NumPy array for processing
-    img_np = np.array(img, dtype=np.float32)
-    
-    # 1. Determine maximum allowed transformations based on label_code
-    # (Mapping: 0=Emmetropia, 1=Myopia, 2=Hyperopia)
-    if label_code == 1:       # Myopia
-        max_transforms = random.choice([0, 1])
-    elif label_code == 2:     # Hyperopia
-        max_transforms = random.choice([0, 1, 2])
-    elif label_code == 0:     # Emmetropia
-        max_transforms = random.choice([1, 2, 3])
-    else:                     # Default fallback
-        max_transforms = 1
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    h, w = img.shape[:2]
+    th, tw = target_size
+    scale = min(tw / w, th / h)
+    nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
 
-    if max_transforms == 0:
-        return np.clip(img_np, 0.0, 255.0).astype(np.float32)
+    resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
+    padded = np.zeros((th, tw, 3), dtype=np.uint8)
+    top = (th - nh) // 2
+    left = (tw - nw) // 2
+    padded[top : top + nh, left : left + nw] = resized
+    return padded
 
-    # 2. Define pool of mild transformation functions
-    # Intensity factor scales linearly with class_weight (clamped between 0.5 and 1.5)
-    intensity = max(0.5, min(float(class_weight), 1.5))
-    h, w = img_np.shape[:2]
+def augment_image(img):
+    """Apply the same mild augmentation policy to every architecture."""
+    img = np.asarray(img, dtype=np.float32)
+    h, w = img.shape[:2]
 
-    def apply_rotation(img_arr):
-        # Angle ranges between ±(8° * intensity) up to ±15° max
-        angle_deg = random.uniform(-10.0, 10.0) * intensity
-        M = cv2.getRotationMatrix2D((w / 2, h / 2), angle_deg, 1.0)
-        return cv2.warpAffine(img_arr, M, (w, h), borderMode=cv2.BORDER_REFLECT)
+    # Keep augmentation independent of the target label. This prevents the
+    # augmentation policy itself from becoming a class-specific signal.
+    if random.random() < 0.50:
+        angle = random.uniform(-10.0, 10.0)
+        matrix = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+        img = cv2.warpAffine(img, matrix, (w, h), borderMode=cv2.BORDER_REFLECT)
 
-    def apply_flip(img_arr):
-        return cv2.flip(img_arr, 1)
+    if random.random() < 0.50:
+        img = cv2.flip(img, 1)
 
-    def apply_brightness_contrast(img_arr):
-        # Small delta scaled by class weight
-        brightness_delta = random.uniform(-0.08, 0.08) * intensity * 255.0
-        contrast_factor = random.uniform(
-            1.0 - (0.1 * intensity), 1.0 + (0.1 * intensity)
-        )
-        adjusted = (
-            (img_arr - 127.5) * contrast_factor + 127.5 + brightness_delta
-        )
-        return adjusted
+    if random.random() < 0.30:
+        brightness = random.uniform(-0.08, 0.08) * 255.0
+        contrast = random.uniform(0.90, 1.10)
+        img = (img - 127.5) * contrast + 127.5 + brightness
 
-    def apply_zoom(img_arr):
-        # Small central crop and resize back to original dimensions (1-5% zoom)
-        crop_factor = random.uniform(0.92, 0.98)
+    if random.random() < 0.25:
+        crop_factor = random.uniform(0.94, 0.98)
         new_h, new_w = int(h * crop_factor), int(w * crop_factor)
         top = random.randint(0, h - new_h)
         left = random.randint(0, w - new_w)
+        img = cv2.resize(
+            img[top : top + new_h, left : left + new_w],
+            (w, h),
+            interpolation=cv2.INTER_LINEAR,
+        )
 
-        cropped = img_arr[top : top + new_h, left : left + new_w]
-        return cv2.resize(cropped, (w, h), interpolation=cv2.INTER_LINEAR)
+    return np.clip(img, 0.0, 255.0).astype(np.float32)
 
-    def apply_translation(img_arr):
-        max_shift = max(2, int(12 * intensity))
-        tx = random.randint(-max_shift, max_shift)
-        ty = random.randint(-max_shift, max_shift)
-        M = np.float32([[1, 0, tx], [0, 1, ty]])
-        return cv2.warpAffine(img_arr, M, (w, h), borderMode=cv2.BORDER_REFLECT)
 
-    # 3. Randomly select exact transforms up to max_transforms cap
-    transform_pool = [apply_rotation, apply_flip, apply_brightness_contrast, apply_zoom, apply_translation]
-    selected_transforms = random.sample(transform_pool, min(max_transforms, len(transform_pool)))
-
-    # 4. Sequential execution of selected capped transformations
-    for transform_fn in selected_transforms:
-        img_np = transform_fn(img_np)
-
-    return np.clip(img_np, 0.0, 255.0).astype(np.float32)
-    
-def create_multimodal_generator(df, metadata_cols, class_weights, batch_size=16, target_size=(300, 300), augment=False, preprocess_fn=None, image_loader=None):
+def create_image_generator(
+    df,
+    batch_size=16,
+    target_size=(300, 300),
+    augment=False,
+    preprocess_fn=None,
+    shuffle=False,
+):
     """
-    Generator yielding multi-modal inputs: (images, metadata) and targets.
-    Handles arbitrary numeric & categorical metadata columns via One-Hot Encoding.
+    Create a finite deterministic generator for validation/test and a shuffled
+    generator for training.
+
+    Unlike the original implementation, validation/test records are not sampled
+    randomly with replacement. Every evaluation sample is seen exactly once.
     """
     df_copy = df.copy().reset_index(drop=True)
-    
-    # Pre-process metadata columns: handle categorical string variables via One-Hot Encoding
-    processed_meta = []
-    for col in metadata_cols:
-        if df_copy[col].dtype == 'object' or isinstance(df_copy[col].dtype, pd.CategoricalDtype):
-            # One-hot encode string/categorical columns (e.g., data_origin)
-            dummies = pd.get_dummies(df_copy[col], prefix=col, drop_first=False)
-            processed_meta.append(dummies)
-        else:
-            # Numeric columns (e.g., age)
-            processed_meta.append(df_copy[[col]])
-            
-    # Concatenate processed metadata into a single DataFrame and convert safely to float32
-    metadata_df = pd.concat(processed_meta, axis=1)
-    metadata_matrix = metadata_df.values.astype(np.float32)
-    
-    # Group indices by class for balanced sampling
-    class_indices = {
-        c: df_copy[df_copy["classification_encoded"] == c].index.tolist()
-        for c in df_copy["classification_encoded"].unique()
-    }
-    
-    # Fallback to load_and_preprocess_image if no custom loader is passed
-    loader_fn = (
-        image_loader if image_loader is not None else load_and_preprocess_image
-    )
+    indices = np.arange(len(df_copy))
 
     while True:
-        images = []
-        metadata = []
-        targets = []
+        if shuffle:
+            np.random.shuffle(indices)
 
-        if augment:
-            # --- TRAINING MODE: Equal Class-Balanced Sampling ---
-            samples_per_class = batch_size // len(class_indices)
-            selected_indices = []
+        for start in range(0, len(indices), batch_size):
+            batch_indices = indices[start : start + batch_size]
+            images = []
+            labels = []
 
-            for c, idxs in class_indices.items():
-                # Oversample minority classes with replacement
-                selected_indices.extend(
-                    np.random.choice(idxs, size=samples_per_class, replace=True)
-                )
+            for idx in batch_indices:
+                row = df_copy.iloc[idx]
+                img = load_and_preprocess_image(row["full_path"], target_size)
+                if augment:
+                    img = augment_image(img)
+                if preprocess_fn is not None:
+                    img = preprocess_fn(img)
+                images.append(img)
+                labels.append(int(row["classification_encoded"]))
 
-            # Fill any remainder slots to match exact batch_size
-            remaining = batch_size - len(selected_indices)
-            if remaining > 0:
-                selected_indices.extend(
-                    np.random.choice(df_copy.index, size=remaining, replace=True)
-                )
+            yield np.asarray(images, dtype=np.float32), np.asarray(labels, dtype=np.int32)
 
-            np.random.shuffle(selected_indices)
-        else:
-            # --- VAL / TEST MODE: Sequential / Standard Sampling ---
-            selected_indices = np.random.choice(
-                df_copy.index, size=batch_size, replace=False
-            )
+        if not shuffle:
+            break
 
-        for idx in selected_indices:
-            row = df_copy.iloc[idx]
 
-            # 1. Load image
-            img_path = row["full_path"]
-            img = loader_fn(img_path, target_size=target_size)
+def create_multimodal_generator(
+    df,
+    metadata_cols,
+    batch_size=16,
+    target_size=(300, 300),
+    augment=False,
+    preprocess_fn=None,
+    shuffle=False,
+):
+    """Finite generator for the final FUNDUS IMAGE + AGE ablation."""
+    if not metadata_cols:
+        raise ValueError("metadata_cols must contain at least one feature.")
 
-            # 2. Extract label & apply balanced augmentation
-            label = row.get("classification_encoded", None)
-            if augment:
-                weight = class_weights.get(label, 1.0) if class_weights else 1.0
-                img = augment_image(img, class_weight=weight, label_code=label)
+    df_copy = df.copy().reset_index(drop=True)
+    metadata = df_copy[metadata_cols].astype(np.float32).values
+    indices = np.arange(len(df_copy))
 
-            # 3. Preprocess image
-            if preprocess_fn:
-                img = preprocess_fn(img)
+    while True:
+        if shuffle:
+            np.random.shuffle(indices)
 
-            images.append(img)
+        for start in range(0, len(indices), batch_size):
+            batch_indices = indices[start : start + batch_size]
+            images = []
+            meta_batch = []
+            labels = []
 
-            # 4. Extract metadata
-            metadata.append(metadata_matrix[idx])
+            for idx in batch_indices:
+                row = df_copy.iloc[idx]
+                img = load_and_preprocess_image(row["full_path"], target_size)
+                if augment:
+                    img = augment_image(img)
+                if preprocess_fn is not None:
+                    img = preprocess_fn(img)
+                images.append(img)
+                meta_batch.append(metadata[idx])
+                labels.append(int(row["classification_encoded"]))
 
-            if label is not None:
-                targets.append(label)
+            yield (
+                np.asarray(images, dtype=np.float32),
+                np.asarray(meta_batch, dtype=np.float32),
+            ), np.asarray(labels, dtype=np.int32)
 
-        # Convert to arrays and yield
-        batch_images = np.array(images, dtype=np.float32)
-        batch_meta = np.array(metadata, dtype=np.float32)
-        batch_targets = np.array(targets, dtype=np.int32) if targets else None
+        if not shuffle:
+            break
 
-        if batch_targets is not None:
-            yield (batch_images, batch_meta), batch_targets
-        else:
-            yield (batch_images, batch_meta)
 
 def calculate_class_weights(df, target_col):
-    """Helper to balance gradients against clinical minority classes."""
+    """Calculate weights from the training fold only."""
     classes = np.unique(df[target_col])
-    weights = class_weight.compute_class_weight(class_weight='balanced', 
-                                                 classes=classes, 
-                                                 y=df[target_col].values)
+    weights = class_weight.compute_class_weight(
+        class_weight="balanced",
+        classes=classes,
+        y=df[target_col].values,
+    )
     return dict(zip(classes, weights))
 
+
 def scale_age_feature(
-    train_df: pd.DataFrame,
-    val_df: pd.DataFrame,
-    test_df: pd.DataFrame = None,
-    age_col: str = "age",
-    scaler_save_path: str = "age_scaler.pkl",
+    train_df,
+    val_df,
+    test_df=None,
+    age_col="age",
+    scaler_save_path=None,
 ):
-  """Fits MinMaxScaler on train_df[age_col], transforms val_df and test_df,
+    """Fit age scaling on training data only and apply it to other splits."""
+    scaler = MinMaxScaler()
+    train_df = train_df.copy()
+    val_df = val_df.copy()
 
-  and appends an '{age_col}_scaled' column to each.
-  """
-  scaler = MinMaxScaler()
+    train_df[f"{age_col}_scaled"] = scaler.fit_transform(train_df[[age_col]])
+    val_df[f"{age_col}_scaled"] = scaler.transform(val_df[[age_col]])
 
-  # Create copies to prevent SettingWithCopy warnings
-  train_df = train_df.copy()
-  val_df = val_df.copy()
+    if test_df is not None:
+        test_df = test_df.copy()
+        test_df[f"{age_col}_scaled"] = scaler.transform(test_df[[age_col]])
 
-  # 1. Fit & transform on training data
-  train_df[f"{age_col}_scaled"] = scaler.fit_transform(train_df[[age_col]])
+    if scaler_save_path:
+        joblib.dump(scaler, scaler_save_path)
 
-  # 2. Transform validation data using training bounds
-  val_df[f"{age_col}_scaled"] = scaler.transform(val_df[[age_col]])
-
-  # 3. Transform test data if available
-  if test_df is not None:
-    test_df = test_df.copy()
-    test_df[f"{age_col}_scaled"] = scaler.transform(test_df[[age_col]])
-
-  # 4. Save fitted scaler artifact
-  if scaler_save_path:
-    joblib.dump(scaler, scaler_save_path)
-
-  if test_df is not None:
-    return train_df, val_df, test_df
-  return train_df, val_df
+    if test_df is not None:
+        return train_df, val_df, test_df
+    return train_df, val_df
