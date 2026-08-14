@@ -22,11 +22,12 @@ def build_efficientnet(
     num_classes=3,
     dropout_rate=0.4,
     use_metadata=False,
+    weights="imagenet",
 ):
     image_input = layers.Input(shape=input_image_shape, name="image_input")
     base_model = EfficientNetB3(
         include_top=False,
-        weights="imagenet",
+        weights="weights",
         input_tensor=image_input,
         name="efficientnetb3_backbone",
     )

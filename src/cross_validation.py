@@ -245,7 +245,7 @@ def run_cross_validation(
     preprocess_input=None,
     patient_col="ID",
     target_col="classification_encoded",
-    n_splits=5,
+    n_splits=10,
     batch_size=16,
     epochs=30,
     learning_rate=1e-4,
@@ -281,7 +281,7 @@ def run_cross_validation(
     )
 
     # -------------------------------------------------------------------------
-    # 2. Five-fold Stratified Group CV on the remaining 85%.
+    # 2. Ten-fold Stratified Group CV on the remaining 85%.
     # -------------------------------------------------------------------------
     sgkf = StratifiedGroupKFold(
         n_splits=n_splits,
@@ -407,6 +407,7 @@ def run_cross_validation(
                     val_df,
                     preprocess_input,
                     batch_size,
+                    target_size=input_image_shape[:2],
                     use_metadata=use_metadata,
                     metadata_cols=metadata_cols,
                 )
