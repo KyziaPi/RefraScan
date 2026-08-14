@@ -1,3 +1,4 @@
+# src/preprocessing.py
 import os
 import random
 import cv2
@@ -7,6 +8,7 @@ import pandas as pd
 
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.utils import class_weight
+
 
 CLASS_NAMES = ["Emmetropia", "Myopia", "Hyperopia"]
 CLASS_MAPPING = {"Emmetropia": 0, "Myopia": 1, "Hyperopia": 2}
@@ -21,23 +23,27 @@ TARGET_DERIVED_COLUMNS = {
     "se",
 }
 
+
 def load_and_clean_data(csv_path, img_dir):
-    """Loads the dataset and maps filenames natively for Kaggle environment."""
+    """Load the RefraScan CSV and construct the expected fundus-image paths."""
     df = pd.read_csv(csv_path)
+
     required_cols = {"ID", "eye_side", "classification"}
     missing = required_cols - set(df.columns)
-
     if missing:
         raise ValueError(f"Missing required dataset columns: {sorted(missing)}")
-    
+
     def create_filename(row):
-        side = "OD" if str(row['eye_side'].lower()) == 'right' else "OS"
+        side = "OD" if str(row["eye_side"]).lower() == "right" else "OS"
         return f"RET{str(row['ID']).zfill(3)}{side}.jpg"
-    
-    df['full_path'] = df.apply(lambda r: os.path.join(img_dir, create_filename(r)), axis=1)
+
+    df["full_path"] = df.apply(
+        lambda r: os.path.join(img_dir, create_filename(r)), axis=1
+    )
+
     return df
 
-# Added a function to validate the dataset before training
+
 def validate_dataset(df, patient_col="ID", target_col="classification"):
     """
     Perform the initial dataset checks required before model training.
@@ -72,16 +78,22 @@ def validate_dataset(df, patient_col="ID", target_col="classification"):
     print("\nClass distribution:")
     print(df[target_col].value_counts().reindex(CLASS_NAMES, fill_value=0))
 
-    # Both eyes must remain in the same split. We explicitly inspect whether
-    # a patient has more than one class before proceeding.
+    # A patient can legitimately have different refractive-error classes
+    # between the right and left eyes. For example, one eye may be myopic
+    # while the other is emmetropic. This is NOT label leakage.
+    #
+    # The important rule is that both eyes of a patient must stay in the same
+    # train/validation/test partition. Therefore, we report mixed-label
+    # patients for inspection, but we do not reject the dataset because of it.
     patient_label_counts = df.groupby(patient_col)[target_col].nunique()
     mixed_patients = patient_label_counts[patient_label_counts > 1]
     print(f"\nPatients with multiple target classes: {len(mixed_patients)}")
     if len(mixed_patients) > 0:
+        print("Example patient IDs with multiple eye-level classes:")
         print(mixed_patients.head(10))
-        raise ValueError(
-            "Some patients have different target classes between records. "
-            "Resolve these cases before patient-level stratified splitting."
+        print(
+            "These patients will remain intact as groups during splitting; "
+            "their eye-level labels are retained for classification."
         )
 
     # Explicitly identify target-derived measurements so they can never be
@@ -107,6 +119,7 @@ def validate_dataset(df, patient_col="ID", target_col="classification"):
 
     return df
 
+
 def encode_target(df, source_col="classification", target_col="classification_encoded"):
     """Encode the three clinical classes using the fixed class mapping."""
     df = df.copy()
@@ -115,6 +128,7 @@ def encode_target(df, source_col="classification", target_col="classification_en
         raise ValueError("Target encoding produced missing values.")
     df[target_col] = df[target_col].astype(int)
     return df
+
 
 def majority_class_baseline(df, target_col="classification_encoded"):
     """Return the majority-class baseline for reference."""
@@ -127,6 +141,7 @@ def majority_class_baseline(df, target_col="classification_encoded"):
         "accuracy": accuracy,
         "class_counts": counts.to_dict(),
     }
+
 
 def load_and_preprocess_image(img_path, target_size=(300, 300)):
     """Load an RGB fundus image and resize it with preserved aspect ratio."""
@@ -146,6 +161,7 @@ def load_and_preprocess_image(img_path, target_size=(300, 300)):
     left = (tw - nw) // 2
     padded[top : top + nh, left : left + nw] = resized
     return padded
+
 
 def augment_image(img):
     """Apply the same mild augmentation policy to every architecture."""

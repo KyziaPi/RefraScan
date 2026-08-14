@@ -1,8 +1,9 @@
+# src/cross_validation.py
 import os
 import math
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import StratifiedGroupKFold, train_test_split
+from sklearn.model_selection import StratifiedGroupKFold, GroupShuffleSplit
 
 from src.preprocessing import (
     CLASS_NAMES,
@@ -11,7 +12,6 @@ from src.preprocessing import (
     create_multimodal_generator,
     scale_age_feature,
 )
-
 from src.models import build_model, set_fine_tuning
 from src.train import train_model
 from src.evaluate import evaluate_model, metrics_to_row
@@ -28,19 +28,35 @@ def split_holdout_test(
     test_size=0.15,
     random_state=RANDOM_STATE,
 ):
-    """Create untouched 15% patient-level holdout. Split performed on unique patient IDs to avoid data leakage."""
+    """
+    Create the untouched 15% patient-level holdout.
+
+    The split is performed on unique patient IDs rather than individual eyes,
+    so the two eyes of one patient can never land in different partitions.
+    """
     df = df.copy()
 
-    patient_labels = df.groupby(patient_col)[target_col].first()
-    patient_ids = patient_labels.index.to_numpy()
-    patient_targets = patient_labels.to_numpy()
-
-    development_ids, holdout_ids = train_test_split(
-        patient_ids,
+    # The holdout is split by patient, not by individual eye.
+    #
+    # We intentionally do NOT stratify the patient IDs here using a single
+    # target label because a patient may legitimately have different classes
+    # between the two eyes. Assigning one arbitrary class to that patient
+    # would create a misleading stratification target. The required
+    # Stratification is applied later through StratifiedGroupKFold on the 85%
+    # development set.
+    groups = df[patient_col].to_numpy()
+    splitter = GroupShuffleSplit(
+        n_splits=1,
         test_size=test_size,
-        stratify=patient_targets,
         random_state=random_state,
     )
+
+    development_idx, holdout_idx = next(
+        splitter.split(df, y=df[target_col], groups=groups)
+    )
+
+    development_ids = df.iloc[development_idx][patient_col].unique()
+    holdout_ids = df.iloc[holdout_idx][patient_col].unique()
 
     development_df = df[df[patient_col].isin(development_ids)].copy()
     holdout_df = df[df[patient_col].isin(holdout_ids)].copy()
