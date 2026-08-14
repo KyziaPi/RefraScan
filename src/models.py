@@ -28,8 +28,8 @@ def build_efficientnet(
         include_top=False,
         weights="imagenet",
         input_tensor=image_input,
-        name="efficientnetb3_backbone",
     )
+    base_model._name = "efficientnetb3_backbone"
     base_model.trainable = False
 
     x_img = _build_image_branch(base_model, dropout_rate)
