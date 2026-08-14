@@ -256,6 +256,7 @@ def run_cross_validation(
     fine_tune_layers=30,
     fine_tune_epochs=15,
     fine_tune_learning_rate=1e-5,
+    fine_tune_stages=None,
 ):
     """
     Run the controlled development-data experiment.
