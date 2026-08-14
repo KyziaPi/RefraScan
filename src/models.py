@@ -142,23 +142,71 @@ def build_model(
 
 def set_fine_tuning(model, model_name, trainable_layers=30):
     """
-    Unfreeze only the upper part of the selected ImageNet backbone.
+    Progressively unfreeze the upper part of the image backbone.
 
-    Batch-normalization layers remain frozen because changing their running
-    statistics with a small medical dataset can destabilize fine-tuning.
+    The backbone may appear as a nested Keras model or may be flattened
+    into the outer Functional model when constructed with input_tensor.
+    BatchNormalization layers remain frozen during fine-tuning.
     """
-    backbone = model.get_layer(f"{model_name}_backbone")
-    backbone.trainable = True
 
-    for layer in backbone.layers:
+    # ------------------------------------------------------------------
+    # 1. Try to retrieve the backbone as a nested model.
+    # ------------------------------------------------------------------
+    backbone_name = f"{model_name}_backbone"
+
+    try:
+        backbone = model.get_layer(backbone_name)
+        backbone_layers = backbone.layers
+    except ValueError:
+        # ------------------------------------------------------------------
+        # 2. Keras may flatten the backbone into the outer Functional model.
+        #    In that case, everything before global_average_pooling belongs
+        #    to the image backbone.
+        # ------------------------------------------------------------------
+        backbone_layers = []
+
+        for layer in model.layers:
+            if layer.name == "global_average_pooling":
+                break
+
+            # Exclude the input layer.
+            if not isinstance(layer, tf.keras.layers.InputLayer):
+                backbone_layers.append(layer)
+
+        if not backbone_layers:
+            raise ValueError(
+                f"Could not identify the {model_name} backbone layers."
+            )
+
+    # ------------------------------------------------------------------
+    # 3. Freeze the entire backbone first.
+    # ------------------------------------------------------------------
+    for layer in backbone_layers:
         layer.trainable = False
 
-    # Unfreeze the last N non-BatchNorm layers.
+    # ------------------------------------------------------------------
+    # 4. Select the last N non-BatchNorm backbone layers.
+    # ------------------------------------------------------------------
     candidate_layers = [
-        layer for layer in backbone.layers
+        layer
+        for layer in backbone_layers
         if not isinstance(layer, tf.keras.layers.BatchNormalization)
     ]
+
+    if trainable_layers <= 0:
+        return model
+
+    trainable_layers = min(trainable_layers, len(candidate_layers))
+
+    # ------------------------------------------------------------------
+    # 5. Unfreeze only the upper N non-BatchNorm layers.
+    # ------------------------------------------------------------------
     for layer in candidate_layers[-trainable_layers:]:
         layer.trainable = True
+
+    print(
+        f"Fine-tuning {model_name}: "
+        f"unfroze the upper {trainable_layers} non-BatchNorm backbone layers."
+    )
 
     return model
