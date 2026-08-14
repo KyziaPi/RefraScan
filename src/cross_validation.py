@@ -26,55 +26,105 @@ def split_holdout_test(
     patient_col="ID",
     target_col="classification_encoded",
     test_size=0.15,
-    random_state=RANDOM_STATE,
+    random_state=42,
 ):
     """
-    Create the untouched 15% patient-level holdout.
+    Create an untouched patient-level holdout set.
 
-    The split is performed on unique patient IDs rather than individual eyes,
-    so the two eyes of one patient can never land in different partitions.
+    The split is performed at the patient level so that both eyes
+    belonging to the same patient remain in the same partition.
+
+    Note:
+    We intentionally do NOT assign one target label to each patient
+    because a patient's two eyes may have different refractive-error
+    classifications.
     """
-    df = df.copy()
 
-    # The holdout is split by patient, not by individual eye.
-    #
-    # We intentionally do NOT stratify the patient IDs here using a single
-    # target label because a patient may legitimately have different classes
-    # between the two eyes. Assigning one arbitrary class to that patient
-    # would create a misleading stratification target. The required
-    # Stratification is applied later through StratifiedGroupKFold on the 85%
-    # development set.
-    groups = df[patient_col].to_numpy()
+    from sklearn.model_selection import GroupShuffleSplit
+
+    # ---------------------------------------------------------------
+    # Patient-level group split
+    # ---------------------------------------------------------------
     splitter = GroupShuffleSplit(
         n_splits=1,
         test_size=test_size,
         random_state=random_state,
     )
 
-    development_idx, holdout_idx = next(
-        splitter.split(df, y=df[target_col], groups=groups)
+    train_indices, holdout_indices = next(
+        splitter.split(
+            df,
+            groups=df[patient_col]
+        )
     )
 
-    development_ids = df.iloc[development_idx][patient_col].unique()
-    holdout_ids = df.iloc[holdout_idx][patient_col].unique()
+    development_df = (
+        df.iloc[train_indices]
+        .copy()
+        .reset_index(drop=True)
+    )
 
-    development_df = df[df[patient_col].isin(development_ids)].copy()
-    holdout_df = df[df[patient_col].isin(holdout_ids)].copy()
+    holdout_df = (
+        df.iloc[holdout_indices]
+        .copy()
+        .reset_index(drop=True)
+    )
 
-    # Sanity check: no patient may occur in both sets.
-    overlap = set(development_df[patient_col]) & set(holdout_df[patient_col])
+    # ---------------------------------------------------------------
+    # Verify there is absolutely no patient overlap
+    # ---------------------------------------------------------------
+    development_patients = set(
+        development_df[patient_col]
+    )
+
+    holdout_patients = set(
+        holdout_df[patient_col]
+    )
+
+    overlap = development_patients.intersection(
+        holdout_patients
+    )
+
     if overlap:
-        raise RuntimeError(f"Patient leakage detected in holdout split: {overlap}")
+        raise ValueError(
+            f"Patient leakage detected! "
+            f"{len(overlap)} patients appear in both development "
+            f"and holdout sets."
+        )
 
-    development_df.reset_index(drop=True, inplace=True)
-    holdout_df.reset_index(drop=True, inplace=True)
+    # ---------------------------------------------------------------
+    # Report split information
+    # ---------------------------------------------------------------
+    print("\n" + "=" * 70)
+    print("PATIENT-LEVEL HOLDOUT SPLIT")
+    print("=" * 70)
 
-    print("\n--- Patient-Level Holdout Split ---")
-    print(f"Development records : {len(development_df)}")
-    print(f"Development patients: {development_df[patient_col].nunique()}")
-    print(f"Holdout records     : {len(holdout_df)}")
-    print(f"Holdout patients    : {holdout_df[patient_col].nunique()}")
-    print(f"Patient overlap     : {len(overlap)}")
+    print(
+        f"Development records : {len(development_df):,}"
+    )
+
+    print(
+        f"Holdout records     : {len(holdout_df):,}"
+    )
+
+    print(
+        f"Development patients: "
+        f"{development_df[patient_col].nunique():,}"
+    )
+
+    print(
+        f"Holdout patients    : "
+        f"{holdout_df[patient_col].nunique():,}"
+    )
+
+    print(
+        f"Patient overlap     : {len(overlap)}"
+    )
+
+    print(
+        "\nThe holdout set is now untouched and will not be used "
+        "for architecture/model selection."
+    )
 
     return development_df, holdout_df
 

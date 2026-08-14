@@ -46,76 +46,239 @@ def load_and_clean_data(csv_path, img_dir):
 
 def validate_dataset(df, patient_col="ID", target_col="classification"):
     """
-    Perform the initial dataset checks required before model training.
+    Validate the RefraScan dataset before model development.
 
-    This function deliberately does not use refractive measurements as model
-    inputs. If sphere/cylinder/spherical-equivalent columns are present, they
-    are reported as target-derived fields and must not enter the generators.
+    Important:
+    - A patient may legitimately have different refractive-error
+      classifications between the two eyes.
+    - Therefore, mixed classifications within a patient are reported
+      but are NOT treated as an error.
+    - Patient ID is still used as the grouping variable during splitting
+      so that both eyes of a patient always remain in the same split.
     """
+
     print("\n" + "=" * 70)
     print("DATASET VALIDATION")
     print("=" * 70)
 
-    if df.empty:
-        raise ValueError("Dataset is empty.")
+    # ---------------------------------------------------------------
+    # 1. Check required columns
+    # ---------------------------------------------------------------
+    required_columns = [patient_col, target_col]
 
-    missing = [c for c in [patient_col, target_col, "full_path"] if c not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns: {missing}")
+    missing_columns = [
+        col for col in required_columns
+        if col not in df.columns
+    ]
 
-    print(f"Total images/records : {len(df)}")
-    print(f"Unique patients      : {df[patient_col].nunique()}")
-    print(f"Missing labels       : {df[target_col].isna().sum()}")
-    print(f"Duplicate rows       : {df.duplicated().sum()}")
-
-    if df[target_col].isna().any():
-        raise ValueError("Some records have missing target labels.")
-
-    invalid_labels = set(df[target_col].unique()) - set(CLASS_MAPPING.keys())
-    if invalid_labels:
-        raise ValueError(f"Unexpected classification labels: {invalid_labels}")
-
-    print("\nClass distribution:")
-    print(df[target_col].value_counts().reindex(CLASS_NAMES, fill_value=0))
-
-    # A patient can legitimately have different refractive-error classes
-    # between the right and left eyes. For example, one eye may be myopic
-    # while the other is emmetropic. This is NOT label leakage.
-    #
-    # The important rule is that both eyes of a patient must stay in the same
-    # train/validation/test partition. Therefore, we report mixed-label
-    # patients for inspection, but we do not reject the dataset because of it.
-    patient_label_counts = df.groupby(patient_col)[target_col].nunique()
-    mixed_patients = patient_label_counts[patient_label_counts > 1]
-    print(f"\nPatients with multiple target classes: {len(mixed_patients)}")
-    if len(mixed_patients) > 0:
-        print("Example patient IDs with multiple eye-level classes:")
-        print(mixed_patients.head(10))
-        print(
-            "These patients will remain intact as groups during splitting; "
-            "their eye-level labels are retained for classification."
+    if missing_columns:
+        raise ValueError(
+            f"Missing required columns: {missing_columns}"
         )
 
-    # Explicitly identify target-derived measurements so they can never be
-    # accidentally added to metadata_cols.
-    derived_present = [c for c in df.columns if c.lower() in TARGET_DERIVED_COLUMNS]
-    if derived_present:
-        print("\nTarget-derived refractive columns detected and EXCLUDED from model inputs:")
-        print(derived_present)
+    print(f"\nTotal records       : {len(df):,}")
+    print(f"Unique patients     : {df[patient_col].nunique():,}")
 
-    # Verify image files before training.
-    exists = df["full_path"].map(os.path.isfile)
-    print(f"\nExisting image files : {exists.sum()}/{len(exists)}")
-    if not exists.all():
-        missing_paths = df.loc[~exists, "full_path"].head(10).tolist()
-        print("Example missing paths:", missing_paths)
-        raise FileNotFoundError("One or more referenced fundus images do not exist.")
+    # ---------------------------------------------------------------
+    # 2. Check missing patient IDs
+    # ---------------------------------------------------------------
+    missing_patients = df[patient_col].isna().sum()
 
-    # Check that patients have both eyes when expected, but do not force this
-    # as a requirement because the dataset may legitimately contain one eye.
-    if "eye_side" in df.columns:
-        eye_counts = df.groupby(patient_col)["eye_side"].nunique()
-        print(f"Patients with >=2 eye records: {(eye_counts >= 2).sum()}/{len(eye_counts)}")
+    print(f"Missing patient IDs : {missing_patients:,}")
+
+    if missing_patients > 0:
+        raise ValueError(
+            "Some records do not have a patient ID. "
+            "Patient-level leakage prevention cannot be guaranteed."
+        )
+
+    # ---------------------------------------------------------------
+    # 3. Check missing target labels
+    # ---------------------------------------------------------------
+    missing_labels = df[target_col].isna().sum()
+
+    print(f"Missing labels      : {missing_labels:,}")
+
+    if missing_labels > 0:
+        raise ValueError(
+            "Some records have missing target labels."
+        )
+
+    # ---------------------------------------------------------------
+    # 4. Check duplicate rows
+    # ---------------------------------------------------------------
+    duplicate_rows = df.duplicated().sum()
+
+    print(f"Duplicate rows      : {duplicate_rows:,}")
+
+    if duplicate_rows > 0:
+        print(
+            "WARNING: Duplicate rows were detected. "
+            "Review them before training."
+        )
+
+    # ---------------------------------------------------------------
+    # 5. Check class distribution
+    # ---------------------------------------------------------------
+    print("\nClass distribution:")
+    print(df[target_col].value_counts(dropna=False))
+
+    # ---------------------------------------------------------------
+    # 6. Check whether patients have multiple eye-level classes
+    # ---------------------------------------------------------------
+    #
+    # This is NOT an error.
+    #
+    # Example:
+    #
+    # Patient 001
+    #   Right eye -> Myopia
+    #   Left eye  -> Emmetropia
+    #
+    # This is clinically possible. The important requirement is that
+    # both records remain in the SAME train/validation/test split.
+    # ---------------------------------------------------------------
+
+    patient_class_counts = (
+        df.groupby(patient_col)[target_col]
+        .nunique()
+    )
+
+    mixed_patients = patient_class_counts[
+        patient_class_counts > 1
+    ]
+
+    print(
+        f"\nPatients with multiple target classes: "
+        f"{len(mixed_patients):,}"
+    )
+
+    if len(mixed_patients) > 0:
+        print(
+            "These patients have different classifications between "
+            "their eyes. This is allowed."
+        )
+
+        print("\nExample mixed-class patients:")
+
+        example_ids = mixed_patients.head(10).index
+
+        print(
+            df[
+                df[patient_col].isin(example_ids)
+            ][
+                [patient_col, target_col]
+            ].sort_values(patient_col).to_string(index=False)
+        )
+
+    # ---------------------------------------------------------------
+    # 7. Check for invalid target classes
+    # ---------------------------------------------------------------
+    valid_classes = {
+        "Emmetropia",
+        "Myopia",
+        "Hyperopia"
+    }
+
+    observed_classes = set(
+        df[target_col]
+        .dropna()
+        .astype(str)
+        .str.strip()
+    )
+
+    invalid_classes = observed_classes - valid_classes
+
+    if invalid_classes:
+        raise ValueError(
+            f"Unexpected target classes detected: {invalid_classes}. "
+            f"Expected only: {valid_classes}"
+        )
+
+    print("\nValid target classes confirmed:")
+    print(sorted(observed_classes))
+
+    # ---------------------------------------------------------------
+    # 8. Check image paths
+    # ---------------------------------------------------------------
+    if "image_path" in df.columns:
+
+        missing_images = (
+            ~df["image_path"]
+            .apply(os.path.exists)
+        ).sum()
+
+        print(f"\nMissing image files : {missing_images:,}")
+
+        if missing_images > 0:
+            raise ValueError(
+                f"{missing_images} image files could not be found."
+            )
+
+    # ---------------------------------------------------------------
+    # 9. Check target-derived refractive measurement columns
+    # ---------------------------------------------------------------
+    #
+    # Sphere, cylinder, spherical equivalent, etc. must NOT be used
+    # as model inputs because they directly determine the target class.
+    #
+    # We only report their presence here. They are not passed into
+    # the model.
+    # ---------------------------------------------------------------
+
+    target_derived_keywords = [
+        "sphere",
+        "cylinder",
+        "cyl",
+        "spherical_equivalent",
+        "spherical equivalent",
+        "refractive",
+        "refraction",
+        "diopter",
+        "power"
+    ]
+
+    target_derived_columns = []
+
+    for column in df.columns:
+
+        column_lower = str(column).lower()
+
+        if any(
+            keyword in column_lower
+            for keyword in target_derived_keywords
+        ):
+            target_derived_columns.append(column)
+
+    if target_derived_columns:
+
+        print(
+            "\nTarget-derived refractive measurement columns detected:"
+        )
+
+        for column in target_derived_columns:
+            print(f"  - {column}")
+
+        print(
+            "\nThese columns will NOT be used as model inputs."
+        )
+
+    # ---------------------------------------------------------------
+    # 10. Final validation summary
+    # ---------------------------------------------------------------
+
+    print("\n" + "-" * 70)
+    print("DATASET VALIDATION COMPLETE")
+    print("-" * 70)
+
+    print(
+        "Patient-level grouping will be enforced during all "
+        "development/holdout splits."
+    )
+
+    print(
+        "Mixed eye-level classifications within a patient are allowed."
+    )
 
     return df
 
