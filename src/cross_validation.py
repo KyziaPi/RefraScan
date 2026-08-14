@@ -18,7 +18,24 @@ from src.evaluate import evaluate_model, metrics_to_row
 
 
 RANDOM_STATE = 42
-INPUT_IMAGE_SHAPE = (300, 300, 3)
+
+MODEL_INPUT_SHAPES = {
+    "efficientnet": (300, 300, 3),
+    "resnet50": (224, 224, 3),
+    "densenet121": (224, 224, 3),
+}
+
+
+def get_input_image_shape(model_name):
+    model_name = model_name.lower()
+
+    if model_name not in MODEL_INPUT_SHAPES:
+        raise ValueError(
+            f"Unknown model name: {model_name}. "
+            f"Choose from {list(MODEL_INPUT_SHAPES.keys())}."
+        )
+
+    return MODEL_INPUT_SHAPES[model_name]
 
 
 def split_holdout_test(
@@ -134,6 +151,7 @@ def _build_generators(
     val_df,
     preprocess_input,
     batch_size,
+    target_size,
     use_metadata=False,
     metadata_cols=None,
 ):
@@ -143,7 +161,7 @@ def _build_generators(
             train_df,
             metadata_cols=metadata_cols,
             batch_size=batch_size,
-            target_size=INPUT_IMAGE_SHAPE[:2],
+            target_size=target_size,
             augment=True,
             preprocess_fn=preprocess_input,
             shuffle=True,
@@ -152,7 +170,7 @@ def _build_generators(
             val_df,
             metadata_cols=metadata_cols,
             batch_size=batch_size,
-            target_size=INPUT_IMAGE_SHAPE[:2],
+            target_size=target_size,
             augment=False,
             preprocess_fn=preprocess_input,
             shuffle=False,
@@ -161,7 +179,7 @@ def _build_generators(
         train_gen = create_image_generator(
             train_df,
             batch_size=batch_size,
-            target_size=INPUT_IMAGE_SHAPE[:2],
+            target_size=target_size,
             augment=True,
             preprocess_fn=preprocess_input,
             shuffle=True,
@@ -169,7 +187,7 @@ def _build_generators(
         val_gen = create_image_generator(
             val_df,
             batch_size=batch_size,
-            target_size=INPUT_IMAGE_SHAPE[:2],
+            target_size=target_size,
             augment=False,
             preprocess_fn=preprocess_input,
             shuffle=False,
@@ -182,6 +200,7 @@ def _build_test_generator(
     test_df,
     preprocess_input,
     batch_size,
+    target_size,
     use_metadata=False,
     metadata_cols=None,
 ):
@@ -191,7 +210,7 @@ def _build_test_generator(
             test_df,
             metadata_cols=metadata_cols,
             batch_size=batch_size,
-            target_size=INPUT_IMAGE_SHAPE[:2],
+            target_size=target_size,
             augment=False,
             preprocess_fn=preprocess_input,
             shuffle=False,
@@ -200,7 +219,7 @@ def _build_test_generator(
     return create_image_generator(
         test_df,
         batch_size=batch_size,
-        target_size=INPUT_IMAGE_SHAPE[:2],
+        target_size=target_size,
         augment=False,
         preprocess_fn=preprocess_input,
         shuffle=False,
@@ -246,6 +265,8 @@ def run_cross_validation(
     """
     if preprocess_input is None:
         raise ValueError("A backbone-specific preprocess_input function is required.")
+
+    input_image_shape = get_input_image_shape(model_name)
 
     if use_metadata and metadata_cols is None:
         raise ValueError("metadata_cols must be provided when use_metadata=True.")
@@ -317,6 +338,7 @@ def run_cross_validation(
             val_df,
             preprocess_input,
             batch_size,
+            target_size=input_image_shape[:2],
             use_metadata=use_metadata,
             metadata_cols=metadata_cols,
         )
@@ -326,7 +348,7 @@ def run_cross_validation(
 
         model = build_model(
             model_name=model_name,
-            input_image_shape=INPUT_IMAGE_SHAPE,
+            input_image_shape=input_image_shape,
             num_metadata_features=len(metadata_cols or []),
             num_classes=3,
             dropout_rate=0.4,
@@ -415,7 +437,7 @@ def run_cross_validation(
                 val_df,
                 metadata_cols=metadata_cols,
                 batch_size=batch_size,
-                target_size=INPUT_IMAGE_SHAPE[:2],
+                target_size=input_image_shape[:2],
                 augment=False,
                 preprocess_fn=preprocess_input,
                 shuffle=False,
@@ -424,7 +446,7 @@ def run_cross_validation(
             else create_image_generator(
                 val_df,
                 batch_size=batch_size,
-                target_size=INPUT_IMAGE_SHAPE[:2],
+                target_size=input_image_shape[:2],
                 augment=False,
                 preprocess_fn=preprocess_input,
                 shuffle=False,
@@ -541,7 +563,7 @@ def train_final_on_development(
 
     model = build_model(
         model_name=model_name,
-        input_image_shape=INPUT_IMAGE_SHAPE,
+        input_image_shape=input_image_shape,
         num_metadata_features=len(metadata_cols or []),
         num_classes=3,
         dropout_rate=0.4,

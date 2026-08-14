@@ -306,7 +306,7 @@ def majority_class_baseline(df, target_col="classification_encoded"):
     }
 
 
-def load_and_preprocess_image(img_path, target_size=(300, 300)):
+def load_and_preprocess_image(img_path, target_size):
     """Load an RGB fundus image and resize it with preserved aspect ratio."""
     img = cv2.imread(img_path)
     if img is None:
