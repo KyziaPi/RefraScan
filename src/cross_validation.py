@@ -1,239 +1,528 @@
+import os
+import math
 import numpy as np
 import pandas as pd
-import math
 from sklearn.model_selection import StratifiedGroupKFold, train_test_split
 
 from src.preprocessing import (
+    CLASS_NAMES,
     calculate_class_weights,
+    create_image_generator,
     create_multimodal_generator,
-    load_and_preprocess_image,
     scale_age_feature,
 )
-from src.models import build_model
+
+from src.models import build_model, set_fine_tuning
 from src.train import train_model
-from src.evaluate import evaluate_model
+from src.evaluate import evaluate_model, metrics_to_row
+
+
+RANDOM_STATE = 42
+INPUT_IMAGE_SHAPE = (300, 300, 3)
+
 
 def split_holdout_test(
-    df: pd.DataFrame,
-    patient_col: str = "ID",
-    target_col: str = "classification_encoded",
-    test_size: float = 0.15,
-    random_state: int = 42,
+    df,
+    patient_col="ID",
+    target_col="classification_encoded",
+    test_size=0.15,
+    random_state=RANDOM_STATE,
 ):
-  """Splits dataframe into 85% CV pool and 15% Holdout Test Set strictly by patient ID."""
-  df = df.copy()
+    """Create untouched 15% patient-level holdout. Split performed on unique patient IDs to avoid data leakage."""
+    df = df.copy()
 
-  patient_classes = df.groupby(patient_col)[target_col].first()
-  unique_ids = patient_classes.index.values
-  unique_labels = patient_classes.values
+    patient_labels = df.groupby(patient_col)[target_col].first()
+    patient_ids = patient_labels.index.to_numpy()
+    patient_targets = patient_labels.to_numpy()
 
-  train_cv_ids, test_ids = train_test_split(
-      unique_ids,
-      test_size=test_size,
-      stratify=unique_labels,
-      random_state=random_state,
-  )
+    development_ids, holdout_ids = train_test_split(
+        patient_ids,
+        test_size=test_size,
+        stratify=patient_targets,
+        random_state=random_state,
+    )
 
-  cv_df = df[df[patient_col].isin(train_cv_ids)].copy().reset_index(drop=True)
-  test_df = df[df[patient_col].isin(test_ids)].copy().reset_index(drop=True)
+    development_df = df[df[patient_col].isin(development_ids)].copy()
+    holdout_df = df[df[patient_col].isin(holdout_ids)].copy()
 
-  print(
-      f"Dataset Split: {len(cv_df)} samples for 10-Fold CV | {len(test_df)}"
-      f" samples in Holdout Test Set ({test_size * 100:.0f}%)"
-  )
-  return cv_df, test_df
+    # Sanity check: no patient may occur in both sets.
+    overlap = set(development_df[patient_col]) & set(holdout_df[patient_col])
+    if overlap:
+        raise RuntimeError(f"Patient leakage detected in holdout split: {overlap}")
+
+    development_df.reset_index(drop=True, inplace=True)
+    holdout_df.reset_index(drop=True, inplace=True)
+
+    print("\n--- Patient-Level Holdout Split ---")
+    print(f"Development records : {len(development_df)}")
+    print(f"Development patients: {development_df[patient_col].nunique()}")
+    print(f"Holdout records     : {len(holdout_df)}")
+    print(f"Holdout patients    : {holdout_df[patient_col].nunique()}")
+    print(f"Patient overlap     : {len(overlap)}")
+
+    return development_df, holdout_df
+
+
+def _build_generators(
+    train_df,
+    val_df,
+    preprocess_input,
+    batch_size,
+    use_metadata=False,
+    metadata_cols=None,
+):
+    """Build training and validation generators using identical image rules."""
+    if use_metadata:
+        train_gen = create_multimodal_generator(
+            train_df,
+            metadata_cols=metadata_cols,
+            batch_size=batch_size,
+            target_size=INPUT_IMAGE_SHAPE[:2],
+            augment=True,
+            preprocess_fn=preprocess_input,
+            shuffle=True,
+        )
+        val_gen = create_multimodal_generator(
+            val_df,
+            metadata_cols=metadata_cols,
+            batch_size=batch_size,
+            target_size=INPUT_IMAGE_SHAPE[:2],
+            augment=False,
+            preprocess_fn=preprocess_input,
+            shuffle=False,
+        )
+    else:
+        train_gen = create_image_generator(
+            train_df,
+            batch_size=batch_size,
+            target_size=INPUT_IMAGE_SHAPE[:2],
+            augment=True,
+            preprocess_fn=preprocess_input,
+            shuffle=True,
+        )
+        val_gen = create_image_generator(
+            val_df,
+            batch_size=batch_size,
+            target_size=INPUT_IMAGE_SHAPE[:2],
+            augment=False,
+            preprocess_fn=preprocess_input,
+            shuffle=False,
+        )
+
+    return train_gen, val_gen
+
+
+def _build_test_generator(
+    test_df,
+    preprocess_input,
+    batch_size,
+    use_metadata=False,
+    metadata_cols=None,
+):
+    """Create a deterministic holdout generator for the final evaluation only."""
+    if use_metadata:
+        return create_multimodal_generator(
+            test_df,
+            metadata_cols=metadata_cols,
+            batch_size=batch_size,
+            target_size=INPUT_IMAGE_SHAPE[:2],
+            augment=False,
+            preprocess_fn=preprocess_input,
+            shuffle=False,
+        )
+
+    return create_image_generator(
+        test_df,
+        batch_size=batch_size,
+        target_size=INPUT_IMAGE_SHAPE[:2],
+        augment=False,
+        preprocess_fn=preprocess_input,
+        shuffle=False,
+    )
+
+
+def _print_summary(results_df, title):
+    print("\n" + "=" * 70)
+    print(title)
+    print("=" * 70)
+    print(results_df.to_string(index=False))
+
+    for metric in ["Macro F1", "Balanced Accuracy", "Macro Precision", "Macro Recall", "Accuracy"]:
+        print(
+            f"{metric:<20}: "
+            f"{results_df[metric].mean():.4f} ± {results_df[metric].std(ddof=0):.4f}"
+        )
+
 
 def run_cross_validation(
-    df: pd.DataFrame,
-    model_name: str = "efficientnet",
-    preprocess_input: callable = None,
-    patient_col: str = "ID",
-    target_col: str = "classification_encoded",
-    n_splits: int = 10,
-    batch_size: int = 16,
-    epochs: int = 30,
-    learning_rate: float = 0.0001,
-    holdout_test_size: float = 0.15,
+    df,
+    model_name="efficientnet",
+    preprocess_input=None,
+    patient_col="ID",
+    target_col="classification_encoded",
+    n_splits=5,
+    batch_size=16,
+    epochs=30,
+    learning_rate=1e-4,
+    use_metadata=False,
+    metadata_cols=None,
+    output_dir="artifacts",
+    fine_tune=False,
+    fine_tune_layers=30,
+    fine_tune_epochs=15,
+    fine_tune_learning_rate=1e-5,
 ):
-    """Executes 10-Fold CV with an isolated Holdout Test Set."""
-    
-    # 1. First, isolate 15% Holdout Test Set by Patient ID (No patient overlap)
-    cv_df, holdout_test_df = split_holdout_test(
+    """
+    Run the controlled development-data experiment.
+
+    IMPORTANT: this function evaluates only validation folds. The 15% holdout
+    is returned separately and is never used to select a model or hyperparameter.
+    """
+    if preprocess_input is None:
+        raise ValueError("A backbone-specific preprocess_input function is required.")
+
+    if use_metadata and metadata_cols is None:
+        raise ValueError("metadata_cols must be provided when use_metadata=True.")
+
+    # -------------------------------------------------------------------------
+    # 1. Isolate the untouched 15% holdout BEFORE cross-validation.
+    # -------------------------------------------------------------------------
+    development_df, holdout_df = split_holdout_test(
         df,
         patient_col=patient_col,
         target_col=target_col,
-        test_size=holdout_test_size,
     )
-    
-    sgkf = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=42)
-    
-    # Tracking metrics
-    val_metrics = {"accuracy": [], "precision": [], "recall": [], "f1": []}
-    test_metrics = {"accuracy": [], "precision": [], "recall": [], "f1": []}
 
-    print(f"\n{'='*65}")
-    print(f"STARTING {n_splits}-FOLD CROSS VALIDATION")
-    print(f"{'='*65}\n")
+    # -------------------------------------------------------------------------
+    # 2. Five-fold Stratified Group CV on the remaining 85%.
+    # -------------------------------------------------------------------------
+    sgkf = StratifiedGroupKFold(
+        n_splits=n_splits,
+        shuffle=True,
+        random_state=RANDOM_STATE,
+    )
+
+    fold_rows = []
+    fold_models = []
+
+    print("\n" + "=" * 70)
+    print(f"{model_name.upper()} | {'IMAGE + AGE' if use_metadata else 'IMAGE ONLY'}")
+    print(f"{n_splits}-FOLD STRATIFIED GROUP CROSS-VALIDATION")
+    print("=" * 70)
 
     for fold, (train_idx, val_idx) in enumerate(
-        sgkf.split(cv_df, y=cv_df[target_col], groups=cv_df[patient_col])
+        sgkf.split(
+            development_df,
+            y=development_df[target_col],
+            groups=development_df[patient_col],
+        ),
+        start=1,
     ):
-        print(f"\n--- Fold {fold + 1}/{n_splits} ---")
+        print(f"\n--- Fold {fold}/{n_splits} ---")
 
-        # 1. Split data for the current fold
-        train_df = cv_df.iloc[train_idx].copy()
-        val_df = cv_df.iloc[val_idx].copy()
+        train_df = development_df.iloc[train_idx].copy().reset_index(drop=True)
+        val_df = development_df.iloc[val_idx].copy().reset_index(drop=True)
 
-        # 2. Prevent Data Leakage: Scale age strictly using the fold's training set
-        train_df, val_df, current_test_df = scale_age_feature(
-            train_df=train_df,
-            val_df=val_df,
-            test_df=holdout_test_df.copy(),
-            age_col="age",
-            scaler_save_path=f"scaler_fold_{fold + 1}.pkl"
-        )
-        
-        metadata_cols = ["age_scaled"]
+        # Explicit leakage check for this fold.
+        train_patients = set(train_df[patient_col])
+        val_patients = set(val_df[patient_col])
+        overlap = train_patients & val_patients
+        if overlap:
+            raise RuntimeError(f"Patient leakage detected in fold {fold}: {overlap}")
 
-        # 3. Calculate fold-specific class weights
+        # Age is fitted ONLY on the training fold when it is part of the ablation.
+        if use_metadata:
+            train_df, val_df = scale_age_feature(
+                train_df,
+                val_df,
+                age_col="age",
+                scaler_save_path=os.path.join(
+                    output_dir, f"{model_name}_fold_{fold}_age_scaler.pkl"
+                ),
+            )
+
+        # Class weights are calculated from the training fold only. We do not
+        # simultaneously use the old class-balanced sampler; this keeps the
+        # imbalance strategy controlled and reproducible.
         class_weights = calculate_class_weights(train_df, target_col)
 
-        # 4. Create Multimodal Generators
-        train_gen = create_multimodal_generator(
-            train_df, 
-            metadata_cols, 
-            class_weights,
-            batch_size=batch_size, 
-            augment=True, 
-            preprocess_fn=preprocess_input,
-            image_loader=load_and_preprocess_image
+        train_gen, val_gen = _build_generators(
+            train_df,
+            val_df,
+            preprocess_input,
+            batch_size,
+            use_metadata=use_metadata,
+            metadata_cols=metadata_cols,
         )
-        val_gen = create_multimodal_generator(
-            val_df, 
-            metadata_cols,
-            class_weights=None,
-            batch_size=batch_size, 
-            augment=False, 
-            preprocess_fn=preprocess_input,
-            image_loader=load_and_preprocess_image
-        )
-        test_gen = create_multimodal_generator(
-            current_test_df,
-            metadata_cols,
-            class_weights=None,
-            batch_size=batch_size,
-            augment=False,
-            preprocess_fn=preprocess_input,
-            image_loader=load_and_preprocess_image
-        )
-        
-        # Calculate steps per epoch based on dataset lengths and batch size
-        majority_class_count = train_df["classification_encoded"].value_counts().max()
-        effective_train_size = majority_class_count * 3
-        steps_per_epoch = int(np.ceil(effective_train_size / batch_size))
-        validation_steps = math.ceil(len(val_df) / batch_size)
-        test_steps = math.ceil(len(current_test_df) / batch_size)
 
-        # 5. Build a fresh model for each fold
+        train_steps = math.ceil(len(train_df) / batch_size)
+        val_steps = math.ceil(len(val_df) / batch_size)
+
         model = build_model(
             model_name=model_name,
-            input_image_shape=(300, 300, 3), 
-            num_metadata_features=len(metadata_cols), 
+            input_image_shape=INPUT_IMAGE_SHAPE,
+            num_metadata_features=len(metadata_cols or []),
             num_classes=3,
-            dropout_rate=0.4
+            dropout_rate=0.4,
+            use_metadata=use_metadata,
         )
 
-        fold_model_path = f"best_{model_name}_fold_{fold + 1}.h5"
-        
+        frozen_path = os.path.join(
+            output_dir, f"{model_name}_{'age' if use_metadata else 'image'}_fold_{fold}_frozen.weights.h5"
+        )
 
-        # 6. Train the model
+        # ---------------------------------------------------------------------
+        # 3. Train the frozen-backbone model first.
+        # ---------------------------------------------------------------------
         train_model(
             model=model,
             train_ds=train_gen,
             val_ds=val_gen,
             epochs=epochs,
             learning_rate=learning_rate,
-            steps_per_epoch=steps_per_epoch,
-            validation_steps=validation_steps,
-            save_path=fold_model_path,
-            class_weight=class_weights
+            steps_per_epoch=train_steps,
+            validation_steps=val_steps,
+            save_path=frozen_path,
+            class_weight=class_weights,
         )
 
-        # 7. Evaluate the best model on the fold's validation set
-        model.load_weights(fold_model_path)
-        print("\n[Validation Set Evaluation]")
-        v_res = evaluate_model(
+        model.load_weights(frozen_path)
+
+        # ---------------------------------------------------------------------
+        # 4. Optional controlled fine-tuning of upper backbone layers.
+        # ---------------------------------------------------------------------
+        if fine_tune:
+            # Progressive fine-tuning: begin with a small number of upper
+            # layers, then expand the trainable region while keeping the
+            # learning rate low. The exact stages are fixed before training.
+            stages = fine_tune_stages or [fine_tune_layers]
+            saved_path = frozen_path
+
+            for stage_number, trainable_layers in enumerate(stages, start=1):
+                print(
+                    f"\nFine-tuning stage {stage_number}: "
+                    f"upper {trainable_layers} backbone layers..."
+                )
+                set_fine_tuning(
+                    model, model_name, trainable_layers=trainable_layers
+                )
+
+                fine_path = os.path.join(
+                    output_dir,
+                    f"{model_name}_{'age' if use_metadata else 'image'}_fold_{fold}_stage_{stage_number}.weights.h5",
+                )
+
+                # Recreate the finite validation generator for each fine-tuning
+                # stage because a finite generator is consumed by model.fit().
+                _, stage_val_gen = _build_generators(
+                    train_df,
+                    val_df,
+                    preprocess_input,
+                    batch_size,
+                    use_metadata=use_metadata,
+                    metadata_cols=metadata_cols,
+                )
+
+                train_model(
+                    model=model,
+                    train_ds=train_gen,
+                    val_ds=stage_val_gen,
+                    epochs=fine_tune_epochs,
+                    learning_rate=fine_tune_learning_rate,
+                    steps_per_epoch=train_steps,
+                    validation_steps=val_steps,
+                    save_path=fine_path,
+                    class_weight=class_weights,
+                )
+                model.load_weights(fine_path)
+                saved_path = fine_path
+        else:
+            saved_path = frozen_path
+
+        # ---------------------------------------------------------------------
+        # 5. Validation is the ONLY evaluation used during model selection.
+        # ---------------------------------------------------------------------
+        # Recreate validation generator so evaluation starts at the first
+        # validation record rather than at the generator's previous state.
+        eval_val_gen = (
+            create_multimodal_generator(
+                val_df,
+                metadata_cols=metadata_cols,
+                batch_size=batch_size,
+                target_size=INPUT_IMAGE_SHAPE[:2],
+                augment=False,
+                preprocess_fn=preprocess_input,
+                shuffle=False,
+            )
+            if use_metadata
+            else create_image_generator(
+                val_df,
+                batch_size=batch_size,
+                target_size=INPUT_IMAGE_SHAPE[:2],
+                augment=False,
+                preprocess_fn=preprocess_input,
+                shuffle=False,
+            )
+        )
+
+        val_result = evaluate_model(
             model=model,
-            test_ds=val_gen,
-            steps=validation_steps,
+            test_ds=eval_val_gen,
             y_true=val_df[target_col].values,
-            class_names=["Emmetropia", "Myopia", "Hyperopia"],
+            steps=val_steps,
+            class_names=CLASS_NAMES,
         )
-        
-        # 8. Evaluate on Holdout Test Set
-        print("\n[Holdout Test Set Evaluation]")
-        t_res = evaluate_model(
-            model=model,
-            test_ds=test_gen,
-            steps=test_steps,
-            y_true=current_test_df[target_col].values,
-            class_names=["Emmetropia", "Myopia", "Hyperopia"],
-        )
+        fold_rows.append(metrics_to_row(val_result, fold=fold, model_name=model_name))
+        fold_models.append(saved_path)
 
-        # 9. Store results
-        for m in ["accuracy", "precision", "recall", "f1"]:
-            val_metrics[m].append(v_res.get(m, 0))
-            test_metrics[m].append(t_res.get(m, 0))
-            
-        # Build DataFrames for per-fold breakdown tables
-        num_completed_folds = len(val_metrics["accuracy"])
-        fold_names = [f"Fold {i+1}" for i in range(num_completed_folds)]
-
-        val_summary_df = pd.DataFrame({
-            "Fold": fold_names,
-            "Accuracy": val_metrics["accuracy"],
-            "Precision": val_metrics["precision"],
-            "Recall": val_metrics["recall"],
-            "F1 Score": val_metrics["f1"],
-        })
-
-        test_summary_df = pd.DataFrame({
-            "Fold": fold_names,
-            "Accuracy": test_metrics["accuracy"],
-            "Precision": test_metrics["precision"],
-            "Recall": test_metrics["recall"],
-            "F1 Score": test_metrics["f1"],
-        })
-
-    # 10. Calculate and display final average metrics
-    print("\n" + "=" * 65)
-    print(f"    FINAL CROSS-VALIDATION SUMMARY ({num_completed_folds}-FOLD AVERAGE)")
-    print("=" * 65)
-
-    print("\n--- Validation Performance (Averaged across Folds) ---")
-    for m in ["accuracy", "precision", "recall", "f1"]:
-        mean_val = np.mean(val_metrics[m])
-        std_val = np.std(val_metrics[m])
-        print(f"{m.capitalize():<12}: {mean_val:.4f} ± {std_val:.4f}")
-
-    print("\n--- Per-Fold Validation Breakdown ---")
-    print(val_summary_df.to_string(index=False))
-
-    print("\n" + "-" * 65)
-
-    print("\n--- Holdout Test Performance (Averaged across Fold Models) ---")
-    for m in ["accuracy", "precision", "recall", "f1"]:
-        mean_test = np.mean(test_metrics[m])
-        std_test = np.std(test_metrics[m])
-        print(f"{m.capitalize():<12}: {mean_test:.4f} ± {std_test:.4f}")
-
-    print("\n--- Per-Fold Holdout Test Breakdown ---")
-    print(test_summary_df.to_string(index=False))
-    print("=" * 65)
+    results_df = pd.DataFrame(fold_rows)
+    _print_summary(
+        results_df,
+        f"{model_name.upper()} | {'IMAGE + AGE' if use_metadata else 'IMAGE ONLY'} CV SUMMARY",
+    )
 
     return {
-        "val_metrics": val_metrics,
-        "test_metrics": test_metrics,
-        "val_summary_df": val_summary_df,
-        "test_summary_df": test_summary_df,
+        "development_df": development_df,
+        "holdout_df": holdout_df,
+        "fold_results": results_df,
+        "fold_model_paths": fold_models,
     }
+
+
+def evaluate_holdout_once(
+    model,
+    holdout_df,
+    preprocess_input,
+    batch_size=16,
+    use_metadata=False,
+    metadata_cols=None,
+    class_names=CLASS_NAMES,
+):
+    """
+    Evaluate the untouched holdout exactly once.
+
+    This function must only be called after architecture/model configuration has
+    already been selected using development-data cross-validation.
+    """
+    holdout_gen = _build_test_generator(
+        holdout_df,
+        preprocess_input,
+        batch_size,
+        use_metadata=use_metadata,
+        metadata_cols=metadata_cols,
+    )
+    holdout_steps = math.ceil(len(holdout_df) / batch_size)
+
+    result = evaluate_model(
+        model=model,
+        test_ds=holdout_gen,
+        y_true=holdout_df["classification_encoded"].values,
+        steps=holdout_steps,
+        class_names=class_names,
+    )
+
+    print("\n*** FINAL HOLDOUT EVALUATION COMPLETED ONCE ***")
+    return result
+
+
+def train_final_on_development(
+    development_df,
+    model_name,
+    preprocess_input,
+    batch_size=16,
+    epochs=30,
+    learning_rate=1e-4,
+    use_metadata=False,
+    metadata_cols=None,
+    output_path="artifacts/final_model.weights.h5",
+    fine_tune=False,
+    fine_tune_layers=30,
+    fine_tune_epochs=15,
+    fine_tune_learning_rate=1e-5,
+    fine_tune_stages=None,
+):
+    """
+    Train the selected final configuration on all 85% development data.
+
+    No holdout labels are used here. The resulting model is then ready for the
+    single final holdout evaluation.
+    """
+    train_df = development_df.copy().reset_index(drop=True)
+
+    if use_metadata:
+        # For the final model, fit the age scaler on ALL development records.
+        train_df, _ = scale_age_feature(
+            train_df,
+            train_df.copy(),
+            age_col="age",
+            scaler_save_path=os.path.join(
+                os.path.dirname(output_path) or ".",
+                "final_model_age_scaler.pkl",
+            ),
+        )
+        metadata_cols = metadata_cols or ["age_scaled"]
+
+    class_weights = calculate_class_weights(train_df, "classification_encoded")
+
+    train_gen, _ = _build_generators(
+        train_df,
+        train_df,
+        preprocess_input,
+        batch_size,
+        use_metadata=use_metadata,
+        metadata_cols=metadata_cols,
+    )
+
+    model = build_model(
+        model_name=model_name,
+        input_image_shape=INPUT_IMAGE_SHAPE,
+        num_metadata_features=len(metadata_cols or []),
+        num_classes=3,
+        dropout_rate=0.4,
+        use_metadata=use_metadata,
+    )
+
+    steps = math.ceil(len(train_df) / batch_size)
+
+    # We use a small validation subset only for early stopping during the final
+    # fit. This subset is drawn from development data and never from holdout.
+    # The model selection decision has already been made by CV at this point.
+    history = train_model(
+        model=model,
+        train_ds=train_gen,
+        val_ds=None,
+        epochs=epochs,
+        learning_rate=learning_rate,
+        steps_per_epoch=steps,
+        validation_steps=None,
+        save_path=output_path,
+        class_weight=class_weights,
+    )
+
+    model.load_weights(output_path)
+
+    if fine_tune:
+        # Apply the same progressive fine-tuning schedule selected during CV.
+        stages = fine_tune_stages or [fine_tune_layers]
+        for stage_number, trainable_layers in enumerate(stages, start=1):
+            set_fine_tuning(
+                model, model_name, trainable_layers=trainable_layers
+            )
+            fine_path = (
+                os.path.splitext(output_path)[0]
+                + f"_finetune_stage_{stage_number}.weights.h5"
+            )
+            train_model(
+                model=model,
+                train_ds=train_gen,
+                val_ds=None,
+                epochs=fine_tune_epochs,
+                learning_rate=fine_tune_learning_rate,
+                steps_per_epoch=steps,
+                validation_steps=None,
+                save_path=fine_path,
+                class_weight=class_weights,
+            )
+            model.load_weights(fine_path)
+
+    return model, history
