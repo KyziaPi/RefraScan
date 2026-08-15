@@ -563,6 +563,7 @@ def train_final_on_development(
         train_df,
         preprocess_input,
         batch_size,
+        target_size=input_image_shape[:2],
         use_metadata=use_metadata,
         metadata_cols=metadata_cols,
     )
