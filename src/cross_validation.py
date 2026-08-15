@@ -269,6 +269,9 @@ def run_cross_validation(
 
     input_image_shape = get_input_image_shape(model_name)
 
+    # Ensure experiment artifacts directory exists
+    os.makedirs(output_dir, exist_ok=True)
+
     if use_metadata and metadata_cols is None:
         raise ValueError("metadata_cols must be provided when use_metadata=True.")
 
@@ -538,6 +541,7 @@ def train_final_on_development(
     single final holdout evaluation.
     """
     train_df = development_df.copy().reset_index(drop=True)
+    input_image_shape = get_input_image_shape(model_name)
 
     if use_metadata:
         # For the final model, fit the age scaler on ALL development records.
