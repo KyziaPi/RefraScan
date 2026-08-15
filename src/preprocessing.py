@@ -375,6 +375,7 @@ def create_image_generator(
     Unlike the original implementation, validation/test records are not sampled
     randomly with replacement. Every evaluation sample is seen exactly once.
     """
+    
     df_copy = df.copy().reset_index(drop=True)
     indices = np.arange(len(df_copy))
 
@@ -384,23 +385,23 @@ def create_image_generator(
 
         for start in range(0, len(indices), batch_size):
             batch_indices = indices[start : start + batch_size]
+
             images = []
             labels = []
 
             for idx in batch_indices:
                 row = df_copy.iloc[idx]
                 img = load_and_preprocess_image(row["full_path"], target_size)
+
                 if augment:
                     img = augment_image(img)
                 if preprocess_fn is not None:
                     img = preprocess_fn(img)
+
                 images.append(img)
                 labels.append(int(row["classification_encoded"]))
 
-            yield np.asarray(images, dtype=np.float32), np.asarray(labels, dtype=np.int32)
-
-        if not shuffle:
-            break
+            yield np.asarray(images, dtype=np.float32),np.asarray(labels, dtype=np.int32)
 
 
 def create_multimodal_generator(
@@ -445,9 +446,6 @@ def create_multimodal_generator(
                 np.asarray(images, dtype=np.float32),
                 np.asarray(meta_batch, dtype=np.float32),
             ), np.asarray(labels, dtype=np.int32)
-
-        if not shuffle:
-            break
 
 
 def calculate_class_weights(df, target_col):
