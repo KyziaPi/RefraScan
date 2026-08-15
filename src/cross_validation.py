@@ -490,6 +490,7 @@ def evaluate_holdout_once(
     use_metadata=False,
     metadata_cols=None,
     class_names=CLASS_NAMES,
+    model_name="efficientnet",
 ):
     """
     Evaluate the untouched holdout exactly once.
@@ -497,13 +498,17 @@ def evaluate_holdout_once(
     This function must only be called after architecture/model configuration has
     already been selected using development-data cross-validation.
     """
+    input_image_shape = get_input_image_shape(model_name)
+
     holdout_gen = _build_test_generator(
         holdout_df,
         preprocess_input,
         batch_size,
+        target_size=input_image_shape[:2],
         use_metadata=use_metadata,
         metadata_cols=metadata_cols,
     )
+    
     holdout_steps = math.ceil(len(holdout_df) / batch_size)
 
     result = evaluate_model(
