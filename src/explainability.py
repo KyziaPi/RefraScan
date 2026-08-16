@@ -39,7 +39,7 @@ def make_gradcam_heatmap(model, image, metadata=None, class_index=None, layer_na
         else:
             # The current final model exposes ResNet50 layers directly.
             conv_layers = [
-                layer for layer in model.conv_layers
+                layer for layer in model.layers
                 if isinstance(layer, tf.keras.layers.Conv2D)
                 and getattr(layer.output, "shape", None) is not None
                 and len(layer.output.shape) == 4
