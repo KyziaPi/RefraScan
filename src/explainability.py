@@ -17,21 +17,36 @@ def make_gradcam_heatmap(model, image, metadata=None, class_index=None, layer_na
     class unless a specific true-class explanation is desired.
     """
     if layer_name is None:
+        # Support both nested-backbone models and flat Keras applications
+        # models (e.g., the current ResNet50 final model).
         backbone_candidates = [
             layer for layer in model.layers
             if "backbone" in layer.name
         ]
-        if not backbone_candidates:
-            raise ValueError("Could not automatically identify the CNN backbone.")
-        backbone = backbone_candidates[0]
-        conv_layers = [
-            layer for layer in backbone.layers
-            if getattr(layer.output, "shape", None) is not None
-            and len(layer.output.shape) == 4
-        ]
-        if not conv_layers:
-            raise ValueError("No convolutional layer found for Grad-CAM.")
-        layer_name = conv_layers[-1].name
+
+        if backbone_candidates:
+            backbone = backbone_candidates[0]
+            conv_layers = [
+                layer for layer in backbone.layers
+                if isinstance(layer, tf.keras.layers.Conv2D)
+                and getattr(layer.output, "shape", None) is not None
+                and len(layer.output.shape) == 4
+            ]
+            if not conv_layers:
+                raise ValueError("No convolutional layer found inside the CNN backbone.")
+            layer_name = conv_layers[-1].name
+
+        else:
+            # The current final model exposes ResNet50 layers directly.
+            conv_layers = [
+                layer for layer in model.conv_layers
+                if isinstance(layer, tf.keras.layers.Conv2D)
+                and getattr(layer.output, "shape", None) is not None
+                and len(layer.output.shape) == 4
+            ]
+            if not conv_layers:
+                raise ValueError("No convolutional layer found for Grad-CAM.")
+            layer_name = conv_layers[-1].name
 
     grad_model = tf.keras.models.Model(
         inputs=model.inputs,
