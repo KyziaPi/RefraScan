@@ -8,15 +8,15 @@ class SparseCategoricalFocalLoss(tf.keras.losses.Loss):
     def __init__(self, gamma=2.0, class_weight=None, name="sparse_categorical_focal_loss", **kwargs):
         super().__init__(name=name, **kwargs)
         self.gamma = gamma
-    self.class_weight_dict = (
-        {int(k): float(v) for k, v in class_weight.items()}
-        if class_weight is not None
-        else None
-    )
-    self.class_weight = None
-    if self.class_weight_dict is not None:
-        weights = [self.class_weight_dict[i] for i in sorted(self.class_weight_dict)]
-        self.class_weight = tf.constant(weights, dtype=tf.float32)
+        self.class_weight_dict = (
+            {int(k): float(v) for k, v in class_weight.items()}
+            if class_weight is not None
+            else None
+        )
+        self.class_weight = None
+        if self.class_weight_dict is not None:
+            weights = [self.class_weight_dict[i] for i in sorted(self.class_weight_dict)]
+            self.class_weight = tf.constant(weights, dtype=tf.float32)
 
     def get_config(self):
         config = super().get_config()
