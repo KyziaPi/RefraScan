@@ -5,14 +5,18 @@ from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 class SparseCategoricalFocalLoss(tf.keras.losses.Loss):
     """Sparse focal loss for the three-class refractive-error target."""
 
-    def __init__(self, gamma=2.0, class_weight=None, name="sparse_categorical_focal_loss"):
-        super().__init__(name=name)
-        self.gamma = gamma
-        self.class_weight_dict = (dict(class_weight) if class_weight is not None else None)
-        self.class_weight = None
-        if self.class_weight_dict is not None:
-            weights = [self.class_weight_dict[i] for i in sorted(self.class_weight_dict)]
-            self.class_weight = tf.constant(weights, dtype=tf.float32)
+def __init__(self, gamma=2.0, class_weight=None, name="sparse_categorical_focal_loss"):
+    super().__init__(name=name)
+    self.gamma = gamma
+    self.class_weight_dict = (
+        {int(k): float(v) for k, v in class_weight.items()}
+        if class_weight is not None
+        else None
+    )
+    self.class_weight = None
+    if self.class_weight_dict is not None:
+        weights = [self.class_weight_dict[i] for i in sorted(self.class_weight_dict)]
+        self.class_weight = tf.constant(weights, dtype=tf.float32)
 
     def get_config(self):
         config = super().get_config()
