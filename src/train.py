@@ -8,10 +8,19 @@ class SparseCategoricalFocalLoss(tf.keras.losses.Loss):
     def __init__(self, gamma=2.0, class_weight=None, name="sparse_categorical_focal_loss"):
         super().__init__(name=name)
         self.gamma = gamma
+        self.class_weight_dict = (dict(class_weight) if class_weight is not None else None)
         self.class_weight = None
-        if class_weight is not None:
-            weights = [class_weight[i] for i in sorted(class_weight)]
+        if self.class_weight_dict is not None:
+            weights = [self.class_weight_dict[i] for i in sorted(self.class_weight_dict)]
             self.class_weight = tf.constant(weights, dtype=tf.float32)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "gamma": self.gamma,
+            "class_weight": self.class_weight_dict,
+        })
+        return config
 
     def call(self, y_true, y_pred):
         y_true = tf.cast(tf.reshape(y_true, [-1]), tf.int32)
@@ -41,7 +50,7 @@ def train_model(
 
     # Default save path to model name if not provided
     if save_path is None:
-        save_path = f"{model.name}.weights.h5"
+        save_path = f"{model.name}.keras"
     
     # Ensure saving directory exists
     os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
@@ -69,12 +78,12 @@ def train_model(
                 filepath=save_path,
                 monitor="val_loss",
                 save_best_only=True,
-                save_weights_only=True,
+                save_weights_only=False,
                 verbose=1,
             ),
         ]
 
-    # 3. Fit model & Save best weights (handled via ModelCheckpoint)
+    # 3. Fit model & Save the complete model (handled via ModelCheckpoint)
         history = model.fit(
             train_ds,
             steps_per_epoch=steps_per_epoch,
@@ -90,7 +99,7 @@ def train_model(
         checkpoint = ModelCheckpoint(
             filepath=save_path,
             save_best_only=False,
-            save_weights_only=True,
+            save_weights_only=False,
             verbose=1,
         )
         history = model.fit(

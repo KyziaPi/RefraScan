@@ -328,7 +328,7 @@ def run_cross_validation(
                 val_df,
                 age_col="age",
                 scaler_save_path=os.path.join(
-                    output_dir, f"{model_name}_fold_{fold}_age_scaler.pkl"
+                    output_dir, f"{model_name}_fold_{fold}_age_scaler.joblib"
                 ),
             )
 
@@ -360,7 +360,7 @@ def run_cross_validation(
         )
 
         frozen_path = os.path.join(
-            output_dir, f"{model_name}_{'age' if use_metadata else 'image'}_fold_{fold}_frozen.weights.h5"
+            output_dir, f"{model_name}_{'age' if use_metadata else 'image'}_fold_{fold}_frozen.keras"
         )
 
         # ---------------------------------------------------------------------
@@ -378,7 +378,6 @@ def run_cross_validation(
             class_weight=class_weights,
         )
 
-        model.load_weights(frozen_path)
 
         # ---------------------------------------------------------------------
         # 4. Optional controlled fine-tuning of upper backbone layers.
@@ -401,7 +400,7 @@ def run_cross_validation(
 
                 fine_path = os.path.join(
                     output_dir,
-                    f"{model_name}_{'age' if use_metadata else 'image'}_fold_{fold}_stage_{stage_number}.weights.h5",
+                    f"{model_name}_{'age' if use_metadata else 'image'}_fold_{fold}_stage_{stage_number}.keras",
                 )
 
                 # Recreate the finite validation generator for each fine-tuning
@@ -427,7 +426,6 @@ def run_cross_validation(
                     save_path=fine_path,
                     class_weight=class_weights,
                 )
-                model.load_weights(fine_path)
                 saved_path = fine_path
         else:
             saved_path = frozen_path
@@ -532,7 +530,7 @@ def train_final_on_development(
     learning_rate=1e-4,
     use_metadata=False,
     metadata_cols=None,
-    output_path="artifacts/final_model.weights.h5",
+    output_path="artifacts/final_model.keras",
     fine_tune=False,
     fine_tune_layers=30,
     fine_tune_epochs=15,
@@ -556,7 +554,7 @@ def train_final_on_development(
             age_col="age",
             scaler_save_path=os.path.join(
                 os.path.dirname(output_path) or ".",
-                "final_model_age_scaler.pkl",
+                "final_model_age_scaler.joblib",
             ),
         )
         metadata_cols = metadata_cols or ["age_scaled"]
@@ -599,7 +597,6 @@ def train_final_on_development(
         class_weight=class_weights,
     )
 
-    model.load_weights(output_path)
 
     if fine_tune:
         # Apply the same progressive fine-tuning schedule selected during CV.
@@ -610,7 +607,7 @@ def train_final_on_development(
             )
             fine_path = (
                 os.path.splitext(output_path)[0]
-                + f"_finetune_stage_{stage_number}.weights.h5"
+                + f"_finetune_stage_{stage_number}.keras"
             )
             train_model(
                 model=model,
@@ -623,6 +620,5 @@ def train_final_on_development(
                 save_path=fine_path,
                 class_weight=class_weights,
             )
-            model.load_weights(fine_path)
 
     return model, history
