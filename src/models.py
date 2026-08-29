@@ -70,8 +70,8 @@ def build_resnet50(
 
     if use_metadata:
         meta_input = layers.Input(shape=(num_metadata_features,), name="meta_input")
-        x_meta = layers.Dense(64, activation="relu", name="metadata_dense")(meta_input)
-        x_meta = layers.Dropout(0.3, name="metadata_dropout")(x_meta)
+        x_meta = layers.Dense(16, activation="relu", name="metadata_dense")(meta_input)
+        x_meta = layers.Dropout(0.2, name="metadata_dropout")(x_meta)
         merged = layers.Concatenate(name="feature_fusion")([x_img, x_meta])
         x = layers.Dense(128, activation="relu", name="fusion_dense")(merged)
         x = layers.Dropout(dropout_rate, name="fusion_dropout")(x)
