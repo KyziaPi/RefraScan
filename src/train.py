@@ -3,67 +3,61 @@ import tensorflow as tf
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 
 class SparseCategoricalFocalLoss(tf.keras.losses.Loss):
-  """Custom Focal Loss that accepts sparse integer targets (0, 1, 2)."""
+    """Sparse focal loss for the three-class refractive-error target."""
 
-  def __init__(self, gamma=2.0, class_weight=None, name="sparse_categorical_focal_loss"):
-    super().__init__(name=name)
-    self.gamma = gamma
-    
-    if class_weight is not None:
-      # Convert class_weight dict {0: w0, 1: w1, 2: w2} to Tensor [w0, w1, w2]
-      weights = [class_weight[i] for i in sorted(class_weight.keys())]
-      self.class_weight = tf.constant(weights, dtype=tf.float32)
-    else:
-      self.class_weight = None
+    def __init__(self, gamma=2.0, class_weight=None, name="sparse_categorical_focal_loss", **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.gamma = gamma
+        self.class_weight_dict = (
+            {int(k): float(v) for k, v in class_weight.items()}
+            if class_weight is not None
+            else None
+        )
+        self.class_weight = None
+        if self.class_weight_dict is not None:
+            weights = [self.class_weight_dict[i] for i in sorted(self.class_weight_dict)]
+            self.class_weight = tf.constant(weights, dtype=tf.float32)
 
-  def call(self, y_true, y_pred):
-    y_true = tf.cast(y_true, tf.int32)
-    y_true = tf.reshape(y_true, [-1])
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "gamma": self.gamma,
+            "class_weight": self.class_weight_dict,
+        })
+        return config
 
-    # Clip predictions to prevent numerical instability log(0)
-    y_pred = tf.clip_by_value(y_pred, 1e-7, 1.0 - 1e-7)
+    def call(self, y_true, y_pred):
+        y_true = tf.cast(tf.reshape(y_true, [-1]), tf.int32)
+        y_pred = tf.clip_by_value(y_pred, 1e-7, 1.0 - 1e-7)
+        y_one_hot = tf.one_hot(y_true, depth=tf.shape(y_pred)[-1])
+        p_t = tf.reduce_sum(y_one_hot * y_pred, axis=-1)
+        loss = -tf.pow(1.0 - p_t, self.gamma) * tf.math.log(p_t)
 
-    # Convert integer labels to one-hot vectors
-    num_classes = tf.shape(y_pred)[-1]
-    y_true_one_hot = tf.one_hot(y_true, depth=num_classes)
+        if self.class_weight is not None:
+            loss *= tf.gather(self.class_weight, y_true)
 
-    # Extract prediction probability corresponding to the true class
-    p_t = tf.reduce_sum(y_true_one_hot * y_pred, axis=-1)
+        return tf.reduce_mean(loss)
 
-    # Calculate Focal Loss: - (1 - p_t)^gamma * log(p_t)
-    focal_loss = -tf.pow(1.0 - p_t, self.gamma) * tf.math.log(p_t)
-
-    # Apply class weights (alpha_t) directly to the loss tensor
-    if self.class_weight is not None:
-      alpha_t = tf.gather(self.class_weight, y_true)
-      focal_loss = focal_loss * alpha_t
-
-    return tf.reduce_mean(focal_loss)
 
 def train_model(
     model,
     train_ds,
-    val_ds,
-    epochs=50,
-    learning_rate=0.0001,
+    val_ds=None,
+    epochs=30,
+    learning_rate=1e-4,
     steps_per_epoch=None,
     validation_steps=None,
     save_path=None,
-    class_weight=None
+    class_weight=None,
 ):
-    """
-    Compiles the model, configures early stopping and checkpoints, 
-    and executes training on the provided datasets/generators.
-    """
-    
+    """Compile and train one fold using the fixed experimental strategy."""
+
     # Default save path to model name if not provided
     if save_path is None:
-        save_path = f"{model.name}.h5"
+        save_path = f"{model.name}.keras"
     
     # Ensure saving directory exists
-    dir_name = os.path.dirname(save_path)
-    if dir_name:
-        os.makedirs(dir_name, exist_ok=True)
+    os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
     
     # 1. Instantiate Focal Loss with class_weight injected directly
     loss_fn = SparseCategoricalFocalLoss(gamma=2.0, class_weight=class_weight)
@@ -73,33 +67,50 @@ def train_model(
     model.compile(
         optimizer=optimizer,
         loss=loss_fn,
-        metrics=['accuracy']
+        metrics=["accuracy"],
     )
 
-    # 3. Callbacks
-    callbacks = [
-        EarlyStopping(
-            monitor='val_loss',
-            patience=7,
-            restore_best_weights=True,
-            verbose=1
-        ),
-        ModelCheckpoint(
-            filepath=save_path,
-            monitor='val_loss',
-            save_best_only=True,
-            verbose=1
+    if val_ds is not None:
+        callbacks = [
+            EarlyStopping(
+                monitor="val_loss",
+                patience=7,
+                restore_best_weights=True,
+                verbose=1,
+            ),
+            ModelCheckpoint(
+                filepath=save_path,
+                monitor="val_loss",
+                save_best_only=True,
+                save_weights_only=False,
+                verbose=1,
+            ),
+        ]
+
+    # 3. Fit model & Save the complete model (handled via ModelCheckpoint)
+        history = model.fit(
+            train_ds,
+            steps_per_epoch=steps_per_epoch,
+            validation_data=val_ds,
+            validation_steps=validation_steps,
+            epochs=epochs,
+            callbacks=callbacks,
+            verbose=1,
         )
-    ]
-
-    # 4. Fit model & Save best weights (handled via ModelCheckpoint)
-    history = model.fit(
-        train_ds,
-        steps_per_epoch=steps_per_epoch,
-        validation_data=val_ds,
-        validation_steps=validation_steps,
-        epochs=epochs,
-        callbacks=callbacks,
-    )
-
+    else:
+        # Final development-data training uses the already-selected epoch count
+        # and learning rate. No holdout data is used for early stopping.
+        checkpoint = ModelCheckpoint(
+            filepath=save_path,
+            save_best_only=False,
+            save_weights_only=False,
+            verbose=1,
+        )
+        history = model.fit(
+            train_ds,
+            steps_per_epoch=steps_per_epoch,
+            epochs=epochs,
+            callbacks=[checkpoint],
+            verbose=1,
+        )
     return history
