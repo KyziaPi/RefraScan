@@ -257,6 +257,8 @@ def run_cross_validation(
     fine_tune_epochs=15,
     fine_tune_learning_rate=1e-5,
     fine_tune_stages=None,
+    dropout_rate=0.4,
+    focal_gamma=2.0,
 ):
     """
     Run the controlled development-data experiment.
@@ -355,7 +357,7 @@ def run_cross_validation(
             input_image_shape=input_image_shape,
             num_metadata_features=len(metadata_cols or []),
             num_classes=3,
-            dropout_rate=0.4,
+            dropout_rate=dropout_rate,
             use_metadata=use_metadata,
         )
 
@@ -376,6 +378,7 @@ def run_cross_validation(
             validation_steps=val_steps,
             save_path=frozen_path,
             class_weight=class_weights,
+            focal_gamma=focal_gamma,
         )
 
 
@@ -425,6 +428,7 @@ def run_cross_validation(
                     validation_steps=val_steps,
                     save_path=fine_path,
                     class_weight=class_weights,
+                    focal_gamma=focal_gamma,
                 )
                 saved_path = fine_path
         else:
@@ -536,6 +540,8 @@ def train_final_on_development(
     fine_tune_epochs=15,
     fine_tune_learning_rate=1e-5,
     fine_tune_stages=None,
+    dropout_rate=0.4,
+    focal_gamma=2.0,
 ):
     """
     Train the selected final configuration on all 85% development data.
@@ -576,7 +582,7 @@ def train_final_on_development(
         input_image_shape=input_image_shape,
         num_metadata_features=len(metadata_cols or []),
         num_classes=3,
-        dropout_rate=0.4,
+        dropout_rate=dropout_rate,
         use_metadata=use_metadata,
     )
 
@@ -595,6 +601,7 @@ def train_final_on_development(
         validation_steps=None,
         save_path=output_path,
         class_weight=class_weights,
+        focal_gamma=focal_gamma,
     )
 
 
@@ -619,6 +626,7 @@ def train_final_on_development(
                 validation_steps=None,
                 save_path=fine_path,
                 class_weight=class_weights,
+                focal_gamma=focal_gamma,
             )
 
     return model, history

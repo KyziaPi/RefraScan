@@ -49,6 +49,7 @@ def train_model(
     validation_steps=None,
     save_path=None,
     class_weight=None,
+    focal_gamma=2.0,
 ):
     """Compile and train one fold using the fixed experimental strategy."""
 
@@ -60,7 +61,7 @@ def train_model(
     os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
     
     # 1. Instantiate Focal Loss with class_weight injected directly
-    loss_fn = SparseCategoricalFocalLoss(gamma=2.0, class_weight=class_weight)
+    loss_fn = SparseCategoricalFocalLoss(gamma=focal_gamma, class_weight=class_weight)
 
     # 2. Compile model
     optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
